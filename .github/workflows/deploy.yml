@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: Build Web, Deploy Pages & Build Android APK
 
 on:
   push:
@@ -10,29 +10,36 @@ permissions:
   pages: write
   id-token: write
 
+concurrency:
+  group: pages-and-android
+  cancel-in-progress: false
+
 jobs:
+  # ============================================================
+  # BUILD WEB + DEPLOY TO GITHUB PAGES  (unchanged from before)
+  # ============================================================
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           flutter-version: '3.41.2' # Matching your local version
-          
+
       - name: Get dependencies
         run: flutter pub get
-        
+
       - name: Build Web
         run: flutter build web --release --base-href "/TechFixPro_Flutter_v4/"
-        
+
       - name: Fix 404 and Jekyll
         run: |
           cp build/web/index.html build/web/404.html
           touch build/web/.nojekyll
-          
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -48,3 +55,44 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  # ============================================================
+  # BUILD ANDROID APK - new job, runs independently of the web
+  # build/deploy above and uploads the APK as a downloadable
+  # workflow artifact (Actions run -> Artifacts section).
+  # ============================================================
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: '3.41.2' # Matching your local version
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Rename APK with run number for easy identification
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TechFixPro-${{ github.run_number }}.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TechFixPro-Android-APK
+          path: build/app/outputs/flutter-apk/TechFixPro-${{ github.run_number }}.apk
+          if-no-files-found: error
+          retention-days: 30
