@@ -41,6 +41,6 @@ flutter:
   fonts:
     - family: NotoSans
       fonts:
-        - asset: assets/fonts/NotoSans-VariableFont_wdth,wght.ttf
-        - asset: assets/fonts/NotoSansDevanagari-VariableFont_wdth,wght.ttf
-        - asset: assets/fonts/NotoSansOriya-VariableFont_wdth,wght.ttf
+        - asset: assets/Fonts/NotoSans-VariableFont_wdth,wght.ttf
+        - asset: assets/Fonts/NotoSansDevanagari-VariableFont_wdth,wght.ttf
+        - asset: assets/Fonts/NotoSansOriya-VariableFont_wdth,wght.ttf
