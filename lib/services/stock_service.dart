@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:firebase_database/firebase_database.dart';
 import '../models/m.dart';
 import '../data/providers.dart';
+import '../services/supabase_service.dart';
 
 class StockService {
   static Future<void> deductCart({
@@ -13,8 +13,7 @@ class StockService {
     String by = 'POS',
   }) async {
     if (cart.isEmpty) return;
-    final db = FirebaseDatabase.instance;
-    final batch = <String, dynamic>{};
+    final supabase = SupabaseService.instance.client;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final nowIso = DateTime.now().toIso8601String();
 
@@ -27,11 +26,16 @@ class StockService {
       );
       final newQty = (latest.stockQty - item.qty).clamp(0, 99999);
 
-      batch['products/${latest.productId}/stockQty'] = newQty;
-      batch['products/${latest.productId}/updatedAt'] = nowIso;
+      // Update product
+      await supabase.from('products').update({
+        'stockQty': newQty,
+        'updatedAt': nowIso,
+      }).eq('productId', latest.productId);
 
       final txId = 'tx_${nowMs}_${latest.productId}';
-      batch['transactions/$txId'] = {
+      // Insert transaction
+      final tx = {
+        'transactionId': txId,
         'shopId': shopId,
         'productId': latest.productId,
         'productName': latest.productName,
@@ -44,9 +48,14 @@ class StockService {
         'time': nowMs,
         'by': by,
       };
+      await supabase.from('transactions').insert(tx);
+      // Add to local provider
+      ref.read(transactionsProvider.notifier).add(tx);
 
       final histId = 'h_${nowMs}_${latest.productId}';
-      batch['stock_history/$histId'] = {
+      // Insert stock history
+      await supabase.from('stock_history').insert({
+        'historyId': histId,
         'shopId': shopId,
         'productId': latest.productId,
         'productName': latest.productName,
@@ -56,11 +65,10 @@ class StockService {
         'type': 'sale',
         'time': nowMs,
         'by': by,
-      };
+      });
     }
 
     try {
-      await db.ref().update(batch);
       for (final item in cart) {
         ref.read(productsProvider.notifier).adjustQty(item.product.productId, -item.qty);
       }

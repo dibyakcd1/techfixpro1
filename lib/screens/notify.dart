@@ -89,9 +89,9 @@ class _NotifySheetState extends ConsumerState<NotifySheet> {
               const Text('📣', style: TextStyle(fontSize: 22)),
               const SizedBox(width: 10),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Notify Customer', style: GoogleFonts.syne(
+                Text('Notify Customer', style: GoogleFonts.plusJakartaSans(
                     fontWeight: FontWeight.w800, fontSize: 18, color: C.white)),
-                Text(j.customerName, style: GoogleFonts.syne(
+                Text(j.customerName, style: GoogleFonts.inter(
                     fontSize: 13, color: C.textMuted)),
               ])),
               if (j.notificationSent)
@@ -102,14 +102,14 @@ class _NotifySheetState extends ConsumerState<NotifySheet> {
                     borderRadius: BorderRadius.circular(99),
                     border: Border.all(color: C.green.withValues(alpha: 0.4)),
                   ),
-                  child: Text('Previously Sent', style: GoogleFonts.syne(
+                  child: Text('Previously Sent', style: GoogleFonts.inter(
                       fontSize: 11, fontWeight: FontWeight.w700, color: C.green)),
                 ),
             ]),
             const SizedBox(height: 16),
 
             // Channel selector
-            Text('SEND VIA', style: GoogleFonts.syne(
+            Text('SEND VIA', style: GoogleFonts.inter(
                 fontSize: 10, fontWeight: FontWeight.w700, color: C.textMuted, letterSpacing: 0.5)),
             const SizedBox(height: 8),
             Row(children: [
@@ -127,8 +127,8 @@ class _NotifySheetState extends ConsumerState<NotifySheet> {
                 const Icon(Icons.person_outline, color: C.textMuted, size: 18),
                 const SizedBox(width: 10),
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('To', style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
-                  Text(_recipient, style: GoogleFonts.syne(
+                  Text('To', style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
+                  Text(_recipient, style: GoogleFonts.inter(
                       fontSize: 14, fontWeight: FontWeight.w700, color: C.white)),
                 ]),
               ]),
@@ -144,22 +144,22 @@ class _NotifySheetState extends ConsumerState<NotifySheet> {
                 border: Border.all(color: C.green.withValues(alpha: 0.3)),
               ),
               child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                Text('Amount to Collect', style: GoogleFonts.syne(
+                Text('Amount to Collect', style: GoogleFonts.inter(
                     fontSize: 13, color: C.textMuted)),
-                Text(fmtMoney(j.totalAmount), style: GoogleFonts.syne(
+                Text(fmtMoney(j.totalAmount), style: GoogleFonts.plusJakartaSans(
                     fontSize: 20, fontWeight: FontWeight.w800, color: C.green)),
               ]),
             ),
             const SizedBox(height: 16),
 
             // Message editor
-            Text('MESSAGE PREVIEW', style: GoogleFonts.syne(
+            Text('MESSAGE PREVIEW', style: GoogleFonts.inter(
                 fontSize: 10, fontWeight: FontWeight.w700, color: C.textMuted, letterSpacing: 0.5)),
             const SizedBox(height: 8),
             TextFormField(
               controller: _msgCtrl,
               maxLines: 10,
-              style: GoogleFonts.syne(fontSize: 12, color: C.text, height: 1.6),
+              style: GoogleFonts.inter(fontSize: 12, color: C.text, height: 1.6),
               decoration: const InputDecoration(
                 contentPadding: EdgeInsets.all(14),
               ),
@@ -204,7 +204,7 @@ class _NotifySheetState extends ConsumerState<NotifySheet> {
           child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
             Text(icon, style: const TextStyle(fontSize: 20)),
             const SizedBox(height: 3),
-            Text(label, style: GoogleFonts.syne(
+            Text(label, style: GoogleFonts.inter(
                 fontSize: 11, fontWeight: FontWeight.w700,
                 color: sel ? color : C.textMuted)),
           ]),
@@ -226,7 +226,7 @@ class _NotifySheetState extends ConsumerState<NotifySheet> {
     Navigator.of(context).pop();
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text('${_channelIcon()} Message sent via $_channel!',
-          style: GoogleFonts.syne(fontWeight: FontWeight.w700)),
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
       backgroundColor: _channelColor(),
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),

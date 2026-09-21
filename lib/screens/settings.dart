@@ -1,17 +1,17 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:image_picker/image_picker.dart';
 import '../data/providers.dart';
 import '../data/active_session.dart';
 import '../models/m.dart';
 import '../theme/t.dart';
 import '../widgets/w.dart';
+import '../services/supabase_service.dart';
+import '../services/inventory_repair_service.dart';
+import 'transaction_history.dart';
 
 Future<void> _shopSave(BuildContext context, WidgetRef ref,
     Future<void> Function() fn, {String successMsg = '✅ Saved'}) async {
@@ -19,7 +19,7 @@ Future<void> _shopSave(BuildContext context, WidgetRef ref,
     await fn();
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(successMsg, style: GoogleFonts.syne(fontWeight: FontWeight.w700)),
+        content: Text(successMsg, style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
         backgroundColor: C.green, behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 2)));
     }
@@ -28,7 +28,7 @@ Future<void> _shopSave(BuildContext context, WidgetRef ref,
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('❌ ${msg.length > 110 ? msg.substring(0,110) : msg}',
-            style: GoogleFonts.syne(fontWeight: FontWeight.w600, fontSize: 12)),
+            style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 12)),
         backgroundColor: C.red, behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 5)));
     }
@@ -66,10 +66,10 @@ class _Page extends StatelessWidget {
       title: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: GoogleFonts.syne(
+          Text(title, style: GoogleFonts.plusJakartaSans(
               fontWeight: FontWeight.w800, fontSize: 16, color: C.white)),
           if (subtitle != null)
-            Text(subtitle!, style: GoogleFonts.syne(
+            Text(subtitle!, style: GoogleFonts.inter(
                 fontSize: 11, color: C.textMuted)),
         ],
       ),
@@ -128,7 +128,7 @@ class _SaveBtnState extends State<_SaveBtn> {
           ? const SizedBox(width: 22, height: 22,
               child: CircularProgressIndicator(strokeWidth: 2.5, color: C.bg))
           : Text(_done ? '✅  Saved!' : widget.label,
-              style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 14)),
+              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 14)),
     ),
   );
 }
@@ -144,7 +144,7 @@ Widget _infoBanner(String text, {Color color = C.primary}) => Container(
     borderRadius: BorderRadius.circular(10),
     border: Border.all(color: color.withValues(alpha: 0.3)),
   ),
-  child: Text(text, style: GoogleFonts.syne(fontSize: 12, color: color, height: 1.5)),
+  child: Text(text, style: GoogleFonts.inter(fontSize: 12, color: color, height: 1.5)),
 );
 
 // ─────────────────────────────────────────────────────────────
@@ -162,26 +162,27 @@ class SettingsScreen extends ConsumerWidget {
     // NOT from currentUserProvider (which is always the Firebase owner account).
     final activeSession = ref.watch(activeSessionProvider);
     final role = activeSession?.role ?? session?.role ?? 'technician';
-    final isOwnerSession = activeSession?.isOwner ?? false;
-    final isStaffSession = activeSession?.isStaff ?? false;
+    final isOwner = activeSession?.isOwner ?? session?.isOwner ?? false;
     final isAdmin = role == 'admin';
     final isManager = role == 'manager';
     final isReception = role == 'reception';
     final isTechnician = role == 'technician';
-    final canManageShopSettings = isAdmin || isManager;
-    final canSeeUserRoles = isAdmin || isManager;
-    final roleLabel = isAdmin
-        ? 'Admin'
-        : isManager
-            ? 'Manager'
-            : isReception
-                ? 'Reception'
-                : isTechnician
-                    ? 'Technician'
-                    : 'Staff';
+    final canManageShopSettings = isOwner || isAdmin || isManager;
+    final canSeeUserRoles = isOwner || isAdmin || isManager;
+    final roleLabel = isOwner
+        ? 'Owner'
+        : isAdmin
+            ? 'Admin'
+            : isManager
+                ? 'Manager'
+                : isReception
+                    ? 'Reception'
+                    : isTechnician
+                        ? 'Technician'
+                        : 'Staff';
 
     if (session != null && session.shopId.isNotEmpty && s.shopId != session.shopId) {
-      ref.read(settingsProvider.notifier).loadFromFirebase(session.shopId);
+      ref.read(settingsProvider.notifier).loadFromSupabase(session.shopId);
     }
 
     void go(Widget page) => Navigator.of(context).push(
@@ -215,7 +216,7 @@ class SettingsScreen extends ConsumerWidget {
                           ? activeSession!.displayName : s.ownerName;
                       return (name.isEmpty ? 'A' : name[0]).toUpperCase();
                     })(),
-                    style: GoogleFonts.syne(fontWeight: FontWeight.w900,
+                    style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w900,
                         fontSize: 24, color: C.bg),
                   )),
                 ),
@@ -226,12 +227,12 @@ class SettingsScreen extends ConsumerWidget {
                     activeSession?.displayName.isNotEmpty == true
                         ? activeSession!.displayName
                         : s.ownerName.isEmpty ? 'Admin User' : s.ownerName,
-                    style: GoogleFonts.syne(fontWeight: FontWeight.w800,
+                    style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800,
                         fontSize: 17, color: C.white)),
                   Text(s.shopName.isEmpty ? 'TechFix Pro' : s.shopName,
-                      style: GoogleFonts.syne(fontSize: 13, color: C.primary)),
+                      style: GoogleFonts.inter(fontSize: 13, color: C.primary)),
                   Text(s.email.isEmpty ? 'Tap to set up profile →' : s.email,
-                      style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+                      style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
                   const SizedBox(height: 6),
                   Pill(roleLabel, small: true),
                 ])),
@@ -335,14 +336,19 @@ class SettingsScreen extends ConsumerWidget {
                 onTap: () => go(const AiPage())),
           ]),
 
-          // ── Data & Security ──────────────────────────────────
+          // ── Data & Security ────────────────────────────────────
           SettingsGroup(title: 'DATA & SECURITY', tiles: [
             SettingsTile(icon: '🔒', title: 'App Lock & Biometrics',
                 subtitle: 'PIN, fingerprint, Face ID',
                 onTap: () => go(const AppLockPage())),
-            SettingsTile(icon: '📋', title: 'Audit Logs',
-                subtitle: 'Full activity & change history',
-                onTap: () => go(const AuditLogsPage())),
+            if (session != null && session.isOwner)
+              SettingsTile(icon: '💳', title: 'Transaction History',
+                  subtitle: 'View and edit all transactions',
+                  onTap: () => go(const TransactionHistoryScreen())),
+            if (session != null && session.isOwner)
+              SettingsTile(icon: '📋', title: 'Audit Logs',
+                  subtitle: 'Full activity & change history',
+                  onTap: () => go(const AuditLogsPage())),
             SettingsTile(icon: '☁️', title: 'Cloud Backup',
                 subtitle: 'Auto-backup & restore',
                 onTap: () => go(const BackupPage())),
@@ -350,12 +356,9 @@ class SettingsScreen extends ConsumerWidget {
                 subtitle: 'CSV / Excel / PDF reports',
                 onTap: () => go(const ExportPage())),
             if (isAdmin || role == 'admin' || role == 'manager')
-              SettingsTile(icon: '🧪', title: 'Demo Data Tools',
-                  subtitle: 'Seed or clear demo data for this shop',
-                  onTap: () => go(const DemoDataPage())),
-            SettingsTile(icon: '🧪', title: 'Firebase Diagnostics',
-                subtitle: 'Test connection and permissions',
-                onTap: () => go(const FirebaseDiagnosticsPage())),
+            SettingsTile(icon: '🧪', title: 'Demo Data Tools',
+                subtitle: 'Seed or clear demo data for this shop',
+                onTap: () => go(const DemoDataPage())),
           ]),
 
           // ── About ────────────────────────────────────────────
@@ -391,17 +394,17 @@ class SettingsScreen extends ConsumerWidget {
                 const SizedBox(width: 12),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  Text('Sign Out', style: GoogleFonts.syne(
+                  Text('Sign Out', style: GoogleFonts.inter(
                       fontWeight: FontWeight.w700, fontSize: 15, color: C.yellow)),
                   Text('Log out of current role  ·  Returns to staff PIN screen',
-                      style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+                      style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
                 ])),
               ]),
             ),
           ),
           const SizedBox(height: 20),
           Center(child: Text('TechFix Pro v3.0  ·  Made with ❤️ in India',
-              style: GoogleFonts.syne(fontSize: 11, color: C.textDim))),
+              style: GoogleFonts.inter(fontSize: 11, color: C.textDim))),
         ],
       ),
     );
@@ -411,12 +414,12 @@ class SettingsScreen extends ConsumerWidget {
       showDialog(context: context, builder: (_) => AlertDialog(
         backgroundColor: C.bgCard,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(title, style: GoogleFonts.syne(
+        title: Text(title, style: GoogleFonts.plusJakartaSans(
             fontWeight: FontWeight.w800, color: C.white)),
-        content: Text(body, style: GoogleFonts.syne(
+        content: Text(body, style: GoogleFonts.inter(
             fontSize: 13, color: C.textMuted, height: 1.6)),
         actions: [TextButton(onPressed: () => Navigator.pop(context),
-            child: Text('OK', style: GoogleFonts.syne(
+            child: Text('OK', style: GoogleFonts.inter(
                 color: C.primary, fontWeight: FontWeight.w700)))],
       ));
 
@@ -427,15 +430,15 @@ class SettingsScreen extends ConsumerWidget {
     builder: (_) => AlertDialog(
       backgroundColor: C.bgCard,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Text('Sign Out?', style: GoogleFonts.syne(
+      title: Text('Sign Out?', style: GoogleFonts.plusJakartaSans(
           fontWeight: FontWeight.w800, color: C.white)),
       content: Text(
         'You will be returned to the staff PIN screen. '
         'The app stays connected to the database.',
-        style: GoogleFonts.syne(fontSize: 13, color: C.textMuted, height: 1.5)),
+        style: GoogleFonts.inter(fontSize: 13, color: C.textMuted, height: 1.5)),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: GoogleFonts.syne(color: C.textMuted))),
+            child: Text('Cancel', style: GoogleFonts.inter(color: C.textMuted))),
         ElevatedButton(
           onPressed: () {
             Navigator.of(context).pop();
@@ -444,7 +447,7 @@ class SettingsScreen extends ConsumerWidget {
           style: ElevatedButton.styleFrom(
             backgroundColor: C.yellow, foregroundColor: C.bg,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-          child: Text('Sign Out', style: GoogleFonts.syne(fontWeight: FontWeight.w800))),
+          child: Text('Sign Out', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800))),
       ],
     ),
   );
@@ -461,7 +464,7 @@ class ShopProfilePage extends ConsumerStatefulWidget {
 
 class _ShopProfileState extends ConsumerState<ShopProfilePage> {
   late final TextEditingController _shopName, _owner, _phone, _email, _address, _gst;
-  String? _logoPath;
+  XFile? _logoFile;
 
   @override
   void initState() {
@@ -496,7 +499,7 @@ class _ShopProfileState extends ConsumerState<ShopProfilePage> {
     final session = ref.read(currentUserProvider).asData?.value;
     if (session == null || session.shopId.isEmpty) return;
     await _shopSave(context, ref,
-        () => ref.read(settingsProvider.notifier).saveToFirebase(session.shopId));
+        () => ref.read(settingsProvider.notifier).saveToSupabase(session.shopId));
   }
 
   @override
@@ -507,8 +510,8 @@ class _ShopProfileState extends ConsumerState<ShopProfilePage> {
       Center(child: Column(children: [
         GestureDetector(
           onTap: () async {
-            final path = await pickPhoto(context);
-            if (path != null) setState(() => _logoPath = path);
+            final file = await pickPhoto(context);
+            if (file != null) setState(() => _logoFile = file);
           },
         child: Container(
           width: 90, height: 90,
@@ -517,13 +520,13 @@ class _ShopProfileState extends ConsumerState<ShopProfilePage> {
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: C.primary.withValues(alpha: 0.5), width: 2),
             ),
-            child: _logoPath != null
+            child: _logoFile != null
                 ? ClipRRect(borderRadius: BorderRadius.circular(18),
-                    child: Image.file(File(_logoPath!), fit: BoxFit.cover))
+                    child: Image.network(_logoFile!.path, fit: BoxFit.cover))
                 : Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                     const Icon(Icons.store_outlined, color: C.primary, size: 34),
                     const SizedBox(height: 4),
-                    Text('Shop Logo', style: GoogleFonts.syne(
+                    Text('Shop Logo', style: GoogleFonts.inter(
                         fontSize: 10, color: C.textMuted)),
                   ]),
           ),
@@ -531,11 +534,11 @@ class _ShopProfileState extends ConsumerState<ShopProfilePage> {
         const SizedBox(height: 8),
         TextButton.icon(
           onPressed: () async {
-            final path = await pickPhoto(context);
-            if (path != null) setState(() => _logoPath = path);
+            final file = await pickPhoto(context);
+            if (file != null) setState(() => _logoFile = file);
           },
           icon: const Icon(Icons.upload_outlined, size: 16, color: C.primary),
-          label: Text('Upload Logo', style: GoogleFonts.syne(
+          label: Text('Upload Logo', style: GoogleFonts.inter(
               fontSize: 13, color: C.primary, fontWeight: FontWeight.w700)),
         ),
       ])),
@@ -574,40 +577,298 @@ class _DemoDataState extends ConsumerState<DemoDataPage> {
   bool _clearing = false;
 
   Future<void> _seed() async {
-    final session = ref.read(currentUserProvider).asData?.value;
-    final shopId = session?.shopId ?? 'shop1';
-    
     setState(() => _seeding = true);
     try {
-      await FirebaseDatabase.instance
-          .ref('diagnostics/seed/${DateTime.now().millisecondsSinceEpoch}')
-          .set({'shopId': shopId, 'status': 'requested'});
-    } catch (_) {}
-    if (mounted) {
-      setState(() => _seeding = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('✅ Seed data populated successfully!'), backgroundColor: C.green)
-      );
+      final session = ref.read(currentUserProvider).asData?.value;
+      final shopId = session?.shopId ?? '';
+      if (shopId.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('❌ No shop ID available'), backgroundColor: C.red)
+          );
+        }
+        return;
+      }
+
+      // Helper to insert with resilience
+      Future<void> insertResilient(String table, List<Map<String, dynamic>> dataSets, String description) async {
+        for (final data in dataSets) {
+          try {
+            await SupabaseService().client.from(table).upsert(data);
+            debugPrint('✅ $description inserted with ${data.length} fields');
+            return;
+          } catch (e) {
+            debugPrint('⚠️ $description failed with ${data.length} fields: $e');
+          }
+        }
+        debugPrint('⚠️ Failed to insert $description');
+      }
+
+      final now = DateTime.now();
+      // Create demo staff
+      final techUid = 'demo-$shopId-tech-001';
+      await insertResilient('users', [
+        {
+          'uid': techUid,
+          'shopId': shopId,
+          'displayName': 'Demo Technician',
+          'email': 'tech@demo.local',
+          'phone': '+1 555 123 4567',
+          'role': 'technician',
+          'specialization': 'Screen Repair',
+          'totalJobs': 0,
+          'completedJobs': 0,
+          'rating': 4.8,
+          'isActive': true,
+          'isOwner': false,
+          'biometricEnabled': false,
+          'pin': '1234',
+          'pin_hash': '',
+          'createdAt': now.toIso8601String(),
+          'joinedAt': now.toIso8601String(),
+          'lastLoginAt': '',
+        },
+        {
+          'uid': techUid,
+          'shopId': shopId,
+          'displayName': 'Demo Technician',
+          'role': 'technician',
+          'isActive': true,
+        },
+      ], 'Demo tech staff');
+
+      final recUid = 'demo-$shopId-rec-001';
+      await insertResilient('users', [
+        {
+          'uid': recUid,
+          'shopId': shopId,
+          'displayName': 'Demo Receptionist',
+          'email': 'reception@demo.local',
+          'phone': '+1 555 765 4321',
+          'role': 'reception',
+          'specialization': 'Front Desk',
+          'totalJobs': 0,
+          'completedJobs': 0,
+          'rating': 5.0,
+          'isActive': true,
+          'isOwner': false,
+          'biometricEnabled': false,
+          'pin': '5678',
+          'pin_hash': '',
+          'createdAt': now.toIso8601String(),
+          'joinedAt': now.toIso8601String(),
+          'lastLoginAt': '',
+        },
+        {
+          'uid': recUid,
+          'shopId': shopId,
+          'displayName': 'Demo Receptionist',
+          'role': 'reception',
+          'isActive': true,
+        },
+      ], 'Demo reception staff');
+
+      // Create demo customers
+      final custId1 = 'demo-$shopId-cust-001';
+      await insertResilient('customers', [
+        {
+          'customerId': custId1,
+          'shopId': shopId,
+          'name': 'Rajesh Kumar',
+          'phone': '+91 98765 43210',
+          'email': 'rajesh@example.com',
+          'address': 'MG Road, Bangalore',
+          'tier': 'Gold',
+          'isVip': true,
+          'isBlacklisted': false,
+          'points': 1500,
+          'repairsCount': 3,
+          'totalSpend': 28500.0,
+          'notes': '',
+          'createdAt': now.toIso8601String(),
+          'updatedAt': now.toIso8601String(),
+        },
+        {
+          'customerId': custId1,
+          'shopId': shopId,
+          'name': 'Rajesh Kumar',
+          'phone': '+91 98765 43210',
+        },
+      ], 'Demo customer');
+
+      // Create demo products
+      final prodId1 = 'demo-$shopId-prod-001';
+      await insertResilient('products', [
+        {
+          'productId': prodId1,
+          'shopId': shopId,
+          'sku': 'SCR-SAM-S24-001',
+          'productName': 'Samsung Galaxy S24 OLED Screen',
+          'category': 'Spare Parts',
+          'brand': 'Samsung',
+          'description': 'OEM quality OLED display assembly',
+          'supplierName': 'Demo Parts Supplier',
+          'costPrice': 3200.0,
+          'sellingPrice': 4500.0,
+          'stockQty': 5,
+          'reorderLevel': 3,
+          'stockHistory': [],
+          'isActive': true,
+          'imageUrl': '',
+          'createdAt': now.toIso8601String(),
+          'updatedAt': now.toIso8601String(),
+        },
+        {
+          'productId': prodId1,
+          'shopId': shopId,
+          'productName': 'Samsung Galaxy S24 OLED Screen',
+          'stockQty': 5,
+        },
+      ], 'Demo product 1');
+
+      final prodId2 = 'demo-$shopId-prod-002';
+      await insertResilient('products', [
+        {
+          'productId': prodId2,
+          'shopId': shopId,
+          'sku': 'BAT-IPH-15-001',
+          'productName': 'iPhone 15 Battery',
+          'category': 'Spare Parts',
+          'brand': 'Apple',
+          'description': 'Original Apple battery for iPhone 15',
+          'supplierName': 'Demo Parts Supplier',
+          'costPrice': 2100.0,
+          'sellingPrice': 3200.0,
+          'stockQty': 8,
+          'reorderLevel': 5,
+          'stockHistory': [],
+          'isActive': true,
+          'imageUrl': '',
+          'createdAt': now.toIso8601String(),
+          'updatedAt': now.toIso8601String(),
+        },
+        {
+          'productId': prodId2,
+          'shopId': shopId,
+          'productName': 'iPhone 15 Battery',
+          'stockQty': 8,
+        },
+      ], 'Demo product 2');
+
+      // Create demo job (resilient)
+      final jobId1 = 'demo-$shopId-job-001';
+      const jobNumber = 'DEMO-0001';
+
+      final jobDataSets = [
+        {
+          'jobId': jobId1,
+          'jobNumber': jobNumber,
+          'shopId': shopId,
+          'customerId': custId1,
+          'customerName': 'Rajesh Kumar',
+          'customerPhone': '+91 98765 43210',
+          'brand': 'Samsung',
+          'model': 'Galaxy S24',
+          'imei': '352099001761481',
+          'color': 'Phantom Black',
+          'problem': 'Screen cracked',
+          'notes': 'Customer reported dropping phone, screen has a spider-web crack, touch not working in some areas',
+          'status': 'In Repair',
+          'previousStatus': 'Checked In',
+          'holdReason': null,
+          'priority': 'Normal',
+          'technicianId': techUid,
+          'technicianName': 'Demo Technician',
+          'createdAt': now.toIso8601String(),
+          'estimatedEndDate': now.add(const Duration(days: 3)).toIso8601String(),
+          'laborCost': 1000.0,
+          'partsCost': 4500.0,
+          'discountAmount': 0.0,
+          'taxAmount': 990.0,
+          'totalAmount': 6490.0,
+          'partsUsed': [{'productId': prodId1, 'name': 'Samsung Galaxy S24 OLED Screen', 'quantity': 1, 'price': 4500.0}],
+          'intakePhotos': [],
+          'completionPhotos': [],
+          'timeline': [
+            {'status': 'Job Created', 'time': now.toIso8601String(), 'by': 'System', 'type': 'flow', 'note': 'Demo job created'}
+          ],
+          'notificationSent': false,
+          'reopenCount': 0,
+          'warrantyExpiry': now.add(const Duration(days: 90)).toIso8601String(),
+          'invoiceId': null,
+          'updatedAt': now.toIso8601String(),
+        },
+        {
+          'jobId': jobId1,
+          'jobNumber': jobNumber,
+          'shopId': shopId,
+          'customerId': custId1,
+          'customerName': 'Rajesh Kumar',
+          'brand': 'Samsung',
+          'model': 'Galaxy S24',
+          'status': 'In Repair',
+          'priority': 'Normal',
+          'totalAmount': 6490.0,
+        },
+        {
+          'jobId': jobId1,
+          'jobNumber': jobNumber,
+          'shopId': shopId,
+          'customerName': 'Rajesh Kumar',
+          'status': 'In Repair',
+        },
+      ];
+
+      bool jobInserted = false;
+      for (final jobData in jobDataSets) {
+        try {
+          await SupabaseService().client.from('jobs').upsert(jobData);
+          jobInserted = true;
+          debugPrint('✅ Demo job inserted with ${jobData.length} fields');
+          break;
+        } catch (e) {
+          debugPrint('⚠️ Job insert failed with ${jobData.length} fields: $e');
+        }
+      }
+
+      if (!jobInserted) {
+        debugPrint('⚠️ Failed to insert demo job');
+      }
+
+      // Refresh local providers
+      await ref.read(staffProvider.notifier).loadFromSupabase(shopId);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ Demo data generated successfully!'), backgroundColor: C.green)
+        );
+      }
+    } catch (e) {
+      debugPrint('Seeding error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('❌ Failed to seed data: $e'), backgroundColor: C.red)
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _seeding = false);
     }
   }
 
   Future<void> _clear() async {
-    final session = ref.read(currentUserProvider).asData?.value;
-    final shopId = session?.shopId ?? 'shop1';
-    
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: C.bgCard,
-        title: Text('Clear All Data?', style: GoogleFonts.syne(fontWeight: FontWeight.w800, color: C.white)),
-        content: Text('This will delete all jobs, customers, products, and transactions for this shop. This action cannot be undone.',
-            style: GoogleFonts.syne(fontSize: 13, color: C.textMuted)),
+        title: Text('Clear All Demo Data?', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, color: C.white)),
+        content: Text('This will delete all demo jobs, customers, products, and staff created with the demo tools. This action cannot be undone.',
+            style: GoogleFonts.inter(fontSize: 13, color: C.textMuted)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(backgroundColor: C.red, foregroundColor: C.white),
-            child: const Text('Delete Everything'),
+            child: const Text('Clear Demo Data'),
           ),
         ],
       ),
@@ -616,26 +877,45 @@ class _DemoDataState extends ConsumerState<DemoDataPage> {
     if (confirm == true) {
       setState(() => _clearing = true);
       try {
-        final db = FirebaseDatabase.instance;
-        final nodes = ['jobs', 'customers', 'products', 'transactions', 'stock_history'];
-        final batch = <String, dynamic>{};
-        
-        for (final node in nodes) {
-          final snap = await db.ref(node).orderByChild('shopId').equalTo(shopId).get();
-          if (snap.exists) {
-            for (final child in snap.children) {
-              batch['$node/${child.key}'] = null;
-            }
+        final session = ref.read(currentUserProvider).asData?.value;
+        final shopId = session?.shopId ?? '';
+        if (shopId.isEmpty) return;
+
+        // First, fetch demo jobs to release their parts
+        try {
+          final demoJobsData = await SupabaseService().client.from('jobs').select().eq('shopId', shopId).ilike('jobId', 'demo-%');
+          for (final jobData in demoJobsData) {
+            final job = Job.fromMap(jobData);
+            await InventoryRepairService.releaseParts(
+              ref: ref,
+              job: job,
+              by: 'System',
+            );
+          }
+        } catch (e) {
+          debugPrint('⚠️ Failed to fetch/release demo job parts: $e');
+        }
+
+        // Delete demo records with resilience
+        Future<void> deleteResilient(String table, String column, String pattern) async {
+          try {
+            await SupabaseService().client.from(table).delete().eq('shopId', shopId).ilike(column, pattern);
+            debugPrint('✅ Deleted demo records from $table');
+          } catch (e) {
+            debugPrint('⚠️ Failed to delete demo records from $table: $e');
           }
         }
-        
-        if (batch.isNotEmpty) {
-          await db.ref().update(batch);
-        }
-        
+
+        await deleteResilient('jobs', 'jobId', 'demo-%');
+        await deleteResilient('products', 'productId', 'demo-%');
+        await deleteResilient('customers', 'customerId', 'demo-%');
+        await deleteResilient('users', 'uid', 'demo-%');
+
+        // Refresh local providers
+        await ref.read(staffProvider.notifier).loadFromSupabase(shopId);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('🗑️ All shop data cleared!'), backgroundColor: C.primary)
+            const SnackBar(content: Text('🗑️ Demo data cleared!'), backgroundColor: C.primary)
           );
         }
       } catch (e) {
@@ -661,10 +941,10 @@ class _DemoDataState extends ConsumerState<DemoDataPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('🌱 Seed Sample Data', style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 15, color: C.white)),
+            Text('🌱 Seed Sample Data', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 15, color: C.white)),
             const SizedBox(height: 8),
             Text('Populates your shop with 3+ samples for every feature: staff, products, customers, jobs, and transactions.',
-                style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+                style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
@@ -674,7 +954,7 @@ class _DemoDataState extends ConsumerState<DemoDataPage> {
                 icon: _seeding 
                   ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: C.bg))
                   : const Icon(Icons.auto_awesome_outlined, size: 18),
-                label: Text(_seeding ? 'Seeding...' : 'Generate Demo Data', style: GoogleFonts.syne(fontWeight: FontWeight.w800)),
+                label: Text(_seeding ? 'Seeding...' : 'Generate Demo Data', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
                 style: ElevatedButton.styleFrom(backgroundColor: C.primary, foregroundColor: C.bg),
               ),
             ),
@@ -689,10 +969,10 @@ class _DemoDataState extends ConsumerState<DemoDataPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('⚠️ Danger Zone', style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 15, color: C.red)),
+            Text('⚠️ Clear Demo Data', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 15, color: C.red)),
             const SizedBox(height: 8),
-            Text('Permanently remove all records associated with your shop. Use this to reset before going live.',
-                style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+            Text('Remove demo customers, jobs, products and demo staff for this shop.',
+                style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
@@ -702,7 +982,7 @@ class _DemoDataState extends ConsumerState<DemoDataPage> {
                 icon: _clearing
                   ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: C.red))
                   : const Icon(Icons.delete_sweep_outlined, size: 18),
-                label: Text(_clearing ? 'Clearing...' : 'Clear All Shop Data', style: GoogleFonts.syne(fontWeight: FontWeight.w800)),
+                label: Text(_clearing ? 'Clearing...' : 'Clear Demo Data', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
                 style: OutlinedButton.styleFrom(foregroundColor: C.red, side: const BorderSide(color: C.red)),
               ),
             ),
@@ -757,7 +1037,7 @@ class _InvoicePageState extends ConsumerState<InvoicePage> {
     if (session == null || session.shopId.isEmpty) return;
     if (!mounted) return;
     await _shopSave(context, ref,
-        () => ref.read(settingsProvider.notifier).saveToFirebase(session.shopId),
+        () => ref.read(settingsProvider.notifier).saveToSupabase(session.shopId),
         successMsg: '✅ Invoice settings saved');
   }
 
@@ -775,7 +1055,7 @@ class _InvoicePageState extends ConsumerState<InvoicePage> {
           const Icon(Icons.info_outline, size: 16, color: C.textMuted),
           const SizedBox(width: 8),
           Text('Preview: ${_prefix.text.isEmpty ? "INV" : _prefix.text}-2025-0042',
-              style: GoogleFonts.syne(fontSize: 13, color: C.text,
+              style: GoogleFonts.inter(fontSize: 13, color: C.text,
                   fontWeight: FontWeight.w600)),
         ]),
       ),
@@ -797,9 +1077,9 @@ class _InvoicePageState extends ConsumerState<InvoicePage> {
               const SizedBox(width: 12),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                Text(t, style: GoogleFonts.syne(fontWeight: FontWeight.w700,
+                Text(t, style: GoogleFonts.inter(fontWeight: FontWeight.w700,
                     fontSize: 14, color: sel ? C.primary : C.white)),
-                Text(_templateDesc(t), style: GoogleFonts.syne(
+                Text(_templateDesc(t), style: GoogleFonts.inter(
                     fontSize: 12, color: C.textMuted)),
               ])),
               if (sel) const Icon(Icons.check_circle, color: C.primary, size: 22),
@@ -891,7 +1171,7 @@ class _TaxPageState extends ConsumerState<TaxPage> {
     // Step 3: Save shop settings to Firebase
     if (!mounted) return;
     await _shopSave(context, ref,
-        () => ref.read(settingsProvider.notifier).saveToFirebase(session.shopId),
+        () => ref.read(settingsProvider.notifier).saveToSupabase(session.shopId),
         successMsg: '✅ Tax saved — all active job totals updated');
   }
 
@@ -917,7 +1197,7 @@ class _TaxPageState extends ConsumerState<TaxPage> {
                 Text(t == 'GST' ? '🇮🇳' : t == 'VAT' ? '💶' : '🚫',
                     style: const TextStyle(fontSize: 20)),
                 const SizedBox(height: 4),
-                Text(t, style: GoogleFonts.syne(fontSize: 12,
+                Text(t, style: GoogleFonts.inter(fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: sel ? C.primary : C.textMuted)),
               ]),
@@ -958,10 +1238,10 @@ class _TaxPageState extends ConsumerState<TaxPage> {
 
   Widget _taxRow(String l, String r, double v, {bool bold = false}) =>
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text(l, style: GoogleFonts.syne(fontSize: 13,
+        Text(l, style: GoogleFonts.inter(fontSize: 13,
             color: bold ? C.white : C.textMuted,
             fontWeight: bold ? FontWeight.w700 : FontWeight.w500)),
-        Text(r, style: GoogleFonts.syne(fontSize: 14,
+        Text(r, style: GoogleFonts.plusJakartaSans(fontSize: 14,
             fontWeight: FontWeight.w800, color: C.primary)),
       ]);
 }
@@ -1002,7 +1282,7 @@ class _PayMethodsState extends ConsumerState<PaymentMethodsPage> {
     final session = ref.read(currentUserProvider).asData?.value;
     if (session == null || session.shopId.isEmpty) return;
     await _shopSave(context, ref,
-        () => ref.read(settingsProvider.notifier).saveToFirebase(session.shopId));
+        () => ref.read(settingsProvider.notifier).saveToSupabase(session.shopId));
   }
 
   @override
@@ -1046,7 +1326,7 @@ class _StaffPageState extends ConsumerState<StaffPage> {
         heroTag: 'fab_staff',
         backgroundColor: C.primary, foregroundColor: C.bg,
         icon: const Icon(Icons.person_add_outlined),
-        label: Text('Add Staff', style: GoogleFonts.syne(fontWeight: FontWeight.w800)),
+        label: Text('Add Staff', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
         onPressed: () => Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => const StaffFormPage())),
       ),
@@ -1057,7 +1337,7 @@ class _StaffPageState extends ConsumerState<StaffPage> {
             child: Column(children: [
               const Text('👨‍🔧', style: TextStyle(fontSize: 48)),
               const SizedBox(height: 12),
-              Text('No staff added', style: GoogleFonts.syne(
+              Text('No staff added', style: GoogleFonts.inter(
                   fontSize: 16, color: C.textMuted)),
             ]),
           )),
@@ -1073,7 +1353,7 @@ class _StaffPageState extends ConsumerState<StaffPage> {
                   CircleAvatar(radius: 26,
                     backgroundColor: (t.isActive ? C.primary : C.textDim).withValues(alpha: 0.15),
                     child: Text(t.name.isNotEmpty ? t.name[0] : '?',
-                        style: GoogleFonts.syne(
+                        style: GoogleFonts.plusJakartaSans(
                         fontWeight: FontWeight.w800, fontSize: 18,
                         color: t.isActive ? C.primary : C.textMuted)),
                   ),
@@ -1090,14 +1370,14 @@ class _StaffPageState extends ConsumerState<StaffPage> {
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                   Row(children: [
-                    Flexible(child: Text(t.name, style: GoogleFonts.syne(
+                    Flexible(child: Text(t.name, style: GoogleFonts.inter(
                         fontWeight: FontWeight.w700, fontSize: 15, color: C.white),
                         overflow: TextOverflow.ellipsis)),
                     const SizedBox(width: 8),
                     // ✅ Use role from Technician object — no Firebase fetch needed
                     _rolePill(t.role),
                   ]),
-                  Text(t.specialization, style: GoogleFonts.syne(
+                  Text(t.specialization, style: GoogleFonts.inter(
                       fontSize: 12, color: C.primary)),
                   const SizedBox(height: 2),
                   Row(children: [
@@ -1125,7 +1405,7 @@ class _StaffPageState extends ConsumerState<StaffPage> {
   Widget _statChip(String icon, String val) => Row(children: [
     Text(icon, style: const TextStyle(fontSize: 11)),
     const SizedBox(width: 3),
-    Text(val, style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
+    Text(val, style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
   ]);
 
   // ✅ Fixed: takes role string directly — no async Firebase fetch per card
@@ -1143,7 +1423,7 @@ class _StaffPageState extends ConsumerState<StaffPage> {
         border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
       child: Text('$emoji ${role.toUpperCase()}',
-          style: GoogleFonts.syne(fontSize: 8, fontWeight: FontWeight.w800, color: color)),
+          style: GoogleFonts.plusJakartaSans(fontSize: 8, fontWeight: FontWeight.w800, color: color)),
     );
   }
 }
@@ -1216,7 +1496,6 @@ class _StaffFormState extends ConsumerState<StaffFormPage> {
 
     final existing = widget.staff;
     final id  = existing?.techId ?? 'staff_${DateTime.now().millisecondsSinceEpoch}';
-    final now = DateTime.now().toIso8601String();
     final tech = (existing ?? Technician(
       techId: id, shopId: shopId, name: '',
     )).copyWith(
@@ -1229,50 +1508,22 @@ class _StaffFormState extends ConsumerState<StaffFormPage> {
       role: _role,
     );
 
-    final db = FirebaseDatabase.instance;
-
-    // Single write — users/$id only (staff/ and technicians/ nodes removed)
-    final userRecord = <String, dynamic>{
-      'uid':            id,
-      'displayName':    tech.name,
-      'phone':          tech.phone,
-      'email':          '',
-      'role':           _role,
-      'shopId':         shopId,
-      'isActive':       tech.isActive,
-      'isOwner':        false,
-      'pin':            pin,
-      'pin_hash':       '',
-      'biometricEnabled': false,
-      'specialization': tech.specialization,
-      'totalJobs':      tech.totalJobs,
-      'completedJobs':  tech.completedJobs,
-      'rating':         tech.rating,
-      'joinedAt':       existing != null
-          ? (existing.joinedAt.isEmpty ? now : existing.joinedAt)
-          : now,
-      'createdAt':      existing != null
-          ? (existing.joinedAt.isEmpty ? now : existing.joinedAt)
-          : now,
-      'updatedAt':      now,
-    };
-
     try {
-      await db.ref('users/$id').update(userRecord);
+      // Use Supabase staff provider methods
+      if (_isEdit) {
+        await ref.read(staffProvider.notifier).updateStaff(tech);
+      } else {
+        await ref.read(staffProvider.notifier).addStaff(tech);
+      }
 
       // Update staffProvider — techsProvider auto-updates as a derived view
-      await ref.read(staffProvider.notifier).loadFromFirebase(shopId);
+      await ref.read(staffProvider.notifier).loadFromSupabase(shopId);
 
       if (mounted) {
         _snack(_isEdit ? '✅ Staff updated' : '✅ Staff added', C.green);
         await Future.delayed(const Duration(milliseconds: 400));
         if (mounted) Navigator.of(context).pop();
       }
-    } on FirebaseException catch (e) {
-      final msg = e.code == 'permission-denied'
-          ? 'PERMISSION_DENIED — check shops/$shopId/isActive = true in Firebase'
-          : 'Firebase error: ${e.code} — ${e.message ?? ""}';
-      if (mounted) _snack(msg, C.red);
     } catch (e) {
       if (mounted) _snack('Save failed: $e', C.red);
     }
@@ -1287,42 +1538,38 @@ class _StaffFormState extends ConsumerState<StaffFormPage> {
         backgroundColor: C.bgCard,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text('Remove ${staff.name}?',
-            style: GoogleFonts.syne(fontWeight: FontWeight.w800, color: C.white)),
+            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, color: C.white)),
         content: Text('This removes them from staff and job assignment. '
             'Their existing jobs are not deleted.',
-            style: GoogleFonts.syne(fontSize: 13, color: C.textMuted, height: 1.5)),
+            style: GoogleFonts.inter(fontSize: 13, color: C.textMuted, height: 1.5)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false),
-              child: Text('Cancel', style: GoogleFonts.syne(color: C.textMuted))),
+              child: Text('Cancel', style: GoogleFonts.inter(color: C.textMuted))),
           ElevatedButton(onPressed: () => Navigator.pop(context, true),
               style: ElevatedButton.styleFrom(backgroundColor: C.red,
                   foregroundColor: C.white,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-              child: Text('Remove', style: GoogleFonts.syne(fontWeight: FontWeight.w800))),
+              child: Text('Remove', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800))),
         ],
       ),
     );
     if (confirmed != true || !mounted) return;
 
     try {
-      // Hard-delete: removes from Firebase AND local state instantly.
-      // The real-time listener in main.dart also skips isActive=false,
-      // so the staff list updates immediately without any reload.
-      await ref.read(staffProvider.notifier).removeFromFirebase(id);
+      // Hard-delete: removes from Supabase AND local state instantly.
+      await ref.read(staffProvider.notifier).removeFromSupabase(id);
       if (mounted) {
         _snack('✅ ${staff.name} removed', C.green);
         await Future.delayed(const Duration(milliseconds: 300));
         if (mounted) Navigator.of(context).pop();
       }
-    } on FirebaseException catch (e) {
-      if (mounted) _snack('Delete failed: ${e.code}', C.red);
     } catch (e) {
       if (mounted) _snack('Delete failed: $e', C.red);
     }
   }
 
   void _snack(String msg, Color bg) => ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text(msg, style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 13)),
+    SnackBar(content: Text(msg, style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13)),
         backgroundColor: bg, behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 4)));
 
@@ -1331,7 +1578,7 @@ class _StaffFormState extends ConsumerState<StaffFormPage> {
     title: _isEdit ? 'Edit Staff' : 'New Staff',
     subtitle: _isEdit ? widget.staff!.name : 'Add a team member',
     actions: [TextButton(onPressed: _save,
-        child: Text('Save', style: GoogleFonts.syne(
+        child: Text('Save', style: GoogleFonts.plusJakartaSans(
             fontWeight: FontWeight.w800, color: C.primary, fontSize: 15)))],
     children: [
       // ── Avatar preview ──────────────────────────────────────
@@ -1339,7 +1586,7 @@ class _StaffFormState extends ConsumerState<StaffFormPage> {
         backgroundColor: (_roleMeta[_role]?.$3 ?? C.primary).withValues(alpha: 0.15),
         child: Text(
           _name.text.isEmpty ? '?' : _name.text[0].toUpperCase(),
-          style: GoogleFonts.syne(fontWeight: FontWeight.w900,
+          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w900,
               fontSize: 28,
               color: _roleMeta[_role]?.$3 ?? C.primary),
         ),
@@ -1358,7 +1605,7 @@ class _StaffFormState extends ConsumerState<StaffFormPage> {
       // ✅ Chip-based selector — no DropdownButtonFormField initialValue bug
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Text('ROLE', style: GoogleFonts.syne(
+          Text('ROLE', style: GoogleFonts.plusJakartaSans(
               fontSize: 10, fontWeight: FontWeight.w800,
               color: C.textMuted, letterSpacing: 1.0)),
           const SizedBox(width: 8),
@@ -1373,7 +1620,7 @@ class _StaffFormState extends ConsumerState<StaffFormPage> {
             ),
             child: Text(
               '${_roleMeta[_role]?.$1 ?? ''} ${_role.toUpperCase()}',
-              style: GoogleFonts.syne(
+              style: GoogleFonts.plusJakartaSans(
                   fontSize: 10, fontWeight: FontWeight.w800,
                   color: _roleMeta[_role]?.$3 ?? C.primary),
             ),
@@ -1401,10 +1648,10 @@ class _StaffFormState extends ConsumerState<StaffFormPage> {
                   const SizedBox(width: 6),
                   Column(crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min, children: [
-                    Text(meta.$2, style: GoogleFonts.syne(
+                    Text(meta.$2, style: GoogleFonts.inter(
                         fontSize: 12, fontWeight: FontWeight.w700,
                         color: sel ? meta.$3 : C.text)),
-                    Text(_roleDesc(r), style: GoogleFonts.syne(
+                    Text(_roleDesc(r), style: GoogleFonts.inter(
                         fontSize: 9, color: sel ? meta.$3.withValues(alpha: 0.8) : C.textMuted)),
                   ]),
                 ]),
@@ -1439,7 +1686,7 @@ class _StaffFormState extends ConsumerState<StaffFormPage> {
             style: OutlinedButton.styleFrom(foregroundColor: C.red,
                 side: const BorderSide(color: C.red),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-            child: Text('🗑️  Remove Staff', style: GoogleFonts.syne(
+            child: Text('🗑️  Remove Staff', style: GoogleFonts.plusJakartaSans(
                 fontWeight: FontWeight.w800, fontSize: 14)),
           ),
         ),
@@ -1480,7 +1727,7 @@ class _WorkflowState extends ConsumerState<WorkflowPage> {
     final session = ref.read(currentUserProvider).asData?.value;
     if (session == null || session.shopId.isEmpty) return;
     await _shopSave(context, ref,
-        () => ref.read(settingsProvider.notifier).saveToFirebase(session.shopId));
+        () => ref.read(settingsProvider.notifier).saveToSupabase(session.shopId));
   }
 
   @override
@@ -1512,9 +1759,9 @@ class _WorkflowState extends ConsumerState<WorkflowPage> {
               const SizedBox(width: 14),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                Text(s['title'] ?? '', style: GoogleFonts.syne(fontWeight: FontWeight.w700,
+                Text(s['title'] ?? '', style: GoogleFonts.inter(fontWeight: FontWeight.w700,
                     fontSize: 14, color: C.white)),
-                Text(s['desc'] ?? '', style: GoogleFonts.syne(
+                Text(s['desc'] ?? '', style: GoogleFonts.inter(
                     fontSize: 11, color: C.textMuted)),
               ])),
               const Icon(Icons.drag_indicator, color: C.textDim, size: 20),
@@ -1605,7 +1852,7 @@ class _WarrantyPageState extends ConsumerState<WarrantyPage> {
     }).join(' · ');
 
     await _shopSave(context, ref,
-        () => ref.read(settingsProvider.notifier).saveToFirebase(session.shopId),
+        () => ref.read(settingsProvider.notifier).saveToSupabase(session.shopId),
         successMsg: '✅ Warranty saved — $summary');
   }
 
@@ -1620,19 +1867,19 @@ class _WarrantyPageState extends ConsumerState<WarrantyPage> {
       ..._rules.entries.map((e) => Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Row(children: [
-          Expanded(child: Text(e.key, style: GoogleFonts.syne(
+          Expanded(child: Text(e.key, style: GoogleFonts.inter(
               fontSize: 13, color: C.text))),
           SizedBox(width: 90,
             child: TextFormField(
               controller: e.value,
               keyboardType: TextInputType.number,
               textAlign: TextAlign.center,
-              style: GoogleFonts.syne(fontSize: 13, color: C.white,
+              style: GoogleFonts.inter(fontSize: 13, color: C.white,
                   fontWeight: FontWeight.w700),
               decoration: InputDecoration(
                   contentPadding: const EdgeInsets.symmetric(vertical: 10),
                   suffixText: 'days',
-                  suffixStyle: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
+                  suffixStyle: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
             ),
           ),
         ]),
@@ -1643,688 +1890,6 @@ class _WarrantyPageState extends ConsumerState<WarrantyPage> {
   );
 }
 
-// ═════════════════════════════════════════════════════════════
-// 7. FIREBASE DIAGNOSTICS  (v2 — full node coverage)
-// ═════════════════════════════════════════════════════════════
-//
-// Nodes / operations tested (every R/W the app performs):
-//   0  Firebase SDK init
-//   1  RTDB socket connection (.info/connected)
-//   2  Auth — signed-in user
-//   3  users/$uid          READ  own record (role, shopId, isActive)
-//   4  users/$uid          WRITE lastLoginAt  (runs on every login)
-//   5  shops/$shopId       READ
-//   6  shops/$shopId       WRITE (all Settings sub-pages save here)
-//   7  users (shopId idx)  READ  staff list (User Roles & Staff pages)
-//   8  users/$uid          READ  own record fields (joinedAt, rating, totalJobs)
-//   9  users               READ  full shop staff list (job assign, POS)
-//  10  users/$uid          WRITE isActive toggle (User Roles page)
-//  11  users/$uid          WRITE role change     (User Roles page)
-//  12  users/$uid          WRITE PIN reset       (User Roles page)
-//  13  users/$uid          WRITE add/edit staff  (Staff page)
-//  14  users/$uid          WRITE isActive toggle (Staff remove / soft-delete)
-//  15  customers           READ  (Jobs / Customers screens + Demo clear)
-//  16  jobs                READ  (Jobs screen + Demo clear)
-//  17  products            READ  (Inventory + POS + Demo clear)
-//  18  transactions        READ  (Finance + Demo clear)
-//  19  stock_history       READ  (Demo clear)
-//  20  diagnostics/$uid    WRITE self-log (should always pass)
-// ─────────────────────────────────────────────────────────────
-
-/// Result for a single diagnostic check.
-class _DiagResult {
-  final String label;
-  final String detail;
-  final Color  color;
-  const _DiagResult(this.label, this.detail, this.color);
-}
-
-class FirebaseDiagnosticsPage extends ConsumerStatefulWidget {
-  const FirebaseDiagnosticsPage({super.key});
-  @override
-  ConsumerState<FirebaseDiagnosticsPage> createState() =>
-      _FirebaseDiagnosticsPageState();
-}
-
-class _FirebaseDiagnosticsPageState
-    extends ConsumerState<FirebaseDiagnosticsPage> {
-
-  bool _running = false;
-  bool _hasRun  = false;
-  final List<_DiagResult> _results = [];
-
-  static const _timeout = Duration(seconds: 8);
-
-  // ── Error formatter ────────────────────────────────────────
-  String _fmt(Object e) {
-    final s = e.toString();
-    final m = RegExp(r'\[([^\]]+)\]').firstMatch(s);
-    if (m != null) {
-      final code = m.group(1)!;
-      if (code.contains('permission-denied')) return 'PERMISSION_DENIED — security rule blocked this';
-      if (code.contains('network'))           return 'NETWORK_ERROR — device offline or RTDB unreachable';
-      if (code.contains('unavailable'))       return 'SERVICE_UNAVAILABLE — Firebase temporarily down';
-      return code;
-    }
-    if (s.contains('TimeoutException') || s.contains('timed out')) {
-      return 'TIMEOUT (>8 s) — likely offline or rule hangs read';
-    }
-    return s.length > 140 ? '${s.substring(0, 140)}…' : s;
-  }
-
-  _DiagResult _ok(String label, String detail)   => _DiagResult(label, '✅  $detail', C.green);
-  _DiagResult _warn(String label, String detail)  => _DiagResult(label, '⚠️  $detail', C.yellow);
-  _DiagResult _fail(String label, String detail)  => _DiagResult(label, '❌  $detail', C.red);
-  _DiagResult _skip(String label, String detail)  => _DiagResult(label, '—  $detail', C.textMuted);
-
-  void _add(_DiagResult r) { _results.add(r); if (mounted) setState(() {}); }
-  void _done()              { if (mounted) setState(() => _running = false); }
-
-  // ══════════════════════════════════════════════════════════
-  Future<void> _run() async {
-    setState(() { _running = true; _hasRun = true; _results.clear(); });
-
-    final db   = FirebaseDatabase.instance;
-    final auth = FirebaseAuth.instance;
-    final user = auth.currentUser;
-
-    // ── 0. Firebase SDK ───────────────────────────────────────
-    if (Firebase.apps.isEmpty) {
-      _add(_fail('0 · Firebase SDK', 'No Firebase app initialised — check main.dart → Firebase.initializeApp().'));
-      _done(); return;
-    }
-    _add(_ok('0 · Firebase SDK', 'App initialised (${Firebase.apps.length} app(s))'));
-
-    // ── 1. RTDB socket connection ─────────────────────────────
-    await () async {
-      try {
-        bool? connected;
-        await db.ref('.info/connected')
-            .onValue
-            .timeout(_timeout)
-            .firstWhere((event) {
-          connected = event.snapshot.value as bool?;
-          return connected != null;
-        });
-        if (connected == true) {
-          _add(_ok('1 · RTDB Connection', 'Live socket connected to Firebase Realtime Database'));
-        } else {
-          _add(_warn('1 · RTDB Connection',
-              'connected=false — SDK up but no live socket.\n'
-              '  Causes: device offline · wrong databaseURL · project region mismatch'));
-        }
-      } catch (e) {
-        final msg = e.toString();
-        if (msg.contains('TimeoutException') || msg.contains('timed out') || e is TimeoutException) {
-          _add(_fail('1 · RTDB Connection',
-              'Timed out (8 s) — .info/connected did not respond.\n'
-              '  Device is likely offline or databaseURL is wrong.'));
-        } else {
-          _add(_fail('1 · RTDB Connection', _fmt(e)));
-        }
-      }
-    }();
-
-    // ── 2. Auth ───────────────────────────────────────────────
-    if (user == null) {
-      _add(_fail('2 · Auth', 'No signed-in user — all DB operations will be denied. Log in first.'));
-      _done(); return;
-    }
-    if (user.isAnonymous) {
-      _add(_warn('2 · Auth',
-          'Anonymous session (uid: ${user.uid})\n'
-          '  Most rules require email auth — sign in with email to access shop data.'));
-    } else {
-      _add(_ok('2 · Auth',
-          'Email: ${user.email}  ·  UID: ${user.uid}\n'
-          '  Email verified: ${user.emailVerified}'));
-    }
-
-    final uid = user.uid;
-
-    // ── 3. users/$uid READ (own record) ──────────────────────
-    String? userShopId;
-    String? userRole;
-    bool    userIsActive = false;
-    await () async {
-      try {
-        final snap = await db.ref('users/$uid').get().timeout(_timeout);
-        if (!snap.exists) {
-          _add(_fail('3 · users/\$uid READ',
-              'Node missing — this UID has no user record.\n'
-              '  Fix: create users/$uid in Firebase Console with\n'
-              '       shopId, role, isActive=true, email fields.'));
-          return;
-        }
-        final d = Map<String, dynamic>.from(snap.value as Map);
-        userShopId   = d['shopId']   as String?;
-        userRole     = d['role']     as String?;
-        userIsActive = (d['isActive'] as bool?) ?? false;
-        final issues = <String>[];
-        if (userShopId == null || userShopId!.isEmpty) issues.add('shopId missing');
-        if (userRole   == null || userRole!.isEmpty)   issues.add('role missing');
-        if (!userIsActive)                             issues.add('isActive=false → login blocked');
-        if (issues.isEmpty) {
-          _add(_ok('3 · users/\$uid READ',
-              'shopId: $userShopId  ·  role: $userRole  ·  isActive: true'));
-        } else {
-          _add(_warn('3 · users/\$uid READ',
-              'shopId: $userShopId  ·  role: $userRole  ·  isActive: $userIsActive\n'
-              '  Issues: ${issues.join(' | ')}'));
-        }
-      } catch (e) {
-        _add(_fail('3 · users/\$uid READ', _fmt(e)));
-      }
-    }();
-
-    final shopId = userShopId ?? ref.read(currentUserProvider).asData?.value?.shopId ?? '';
-    final role   = userRole   ?? ref.read(currentUserProvider).asData?.value?.role   ?? '';
-
-    // ── 4. users/$uid WRITE — lastLoginAt ────────────────────
-    await () async {
-      try {
-        await db.ref('users/$uid/lastLoginAt')
-            .set(DateTime.now().toIso8601String())
-            .timeout(_timeout);
-        _add(_ok('4 · users/\$uid WRITE (lastLoginAt)',
-            'Write OK — session tracking will work'));
-      } catch (e) {
-        _add(_fail('4 · users/\$uid WRITE (lastLoginAt)',
-            '${_fmt(e)}\n'
-            '  Rule should allow auth.uid==\$uid to write own record.\n'
-            '  Impact: session timestamp not updated (non-critical but rule mismatch).'));
-      }
-    }();
-
-    // ── 5. shops/$shopId READ ─────────────────────────────────
-    bool shopIsActive = false;
-    if (shopId.isEmpty) {
-      _add(_skip('5 · shops/\$shopId READ', 'Skipped — no shopId on user record'));
-    } else {
-      try {
-        final snap = await db.ref('shops/$shopId').get().timeout(_timeout);
-        if (!snap.exists) {
-          _add(_fail('5 · shops/\$shopId READ',
-              'shops/$shopId does not exist.\n'
-              '  Fix: run onboarding again or create the node manually in Firebase Console.'));
-        } else {
-          final d = Map<String, dynamic>.from(snap.value as Map);
-          shopIsActive = (d['isActive'] as bool?) ?? false;
-          final name   = d['shopName'] as String? ?? '(unnamed)';
-          final plan   = d['plan']     as String? ?? '(no plan)';
-          if (shopIsActive) {
-            _add(_ok('5 · shops/\$shopId READ',
-                'Name: $name  ·  Plan: $plan  ·  isActive: true'));
-          } else {
-            _add(_fail('5 · shops/\$shopId READ',
-                'isActive=$shopIsActive — shop is inactive.\n'
-                '  ALL settings writes (Shop Profile, Tax, Invoice, Payment Methods,\n'
-                '  Warranty, Workflow, WhatsApp, SMS, etc.) will be PERMISSION_DENIED.\n'
-                '  Fix: Firebase Console → shops → $shopId → isActive = true (Boolean)'));
-          }
-        }
-      } catch (e) {
-        _add(_fail('5 · shops/\$shopId READ', _fmt(e)));
-      }
-    }
-
-    // ── 6. shops/$shopId WRITE ────────────────────────────────
-    if (shopId.isEmpty) {
-      _add(_skip('6 · shops/\$shopId WRITE', 'Skipped — no shopId'));
-    } else if (!shopIsActive) {
-      _add(_fail('6 · shops/\$shopId WRITE',
-          'BLOCKED by isActive check (see test 5).\n'
-          '  ALL settings sub-pages (Profile, Tax, Invoice, Payments, Warranty…)\n'
-          '  will fail with PERMISSION_DENIED until isActive=true.'));
-    } else {
-      try {
-        await db.ref('shops/$shopId/_diagTest')
-            .set(DateTime.now().millisecondsSinceEpoch)
-            .timeout(_timeout);
-        await db.ref('shops/$shopId/_diagTest').remove().timeout(_timeout);
-        _add(_ok('6 · shops/\$shopId WRITE',
-            'Write + delete OK — all Settings pages will save successfully\n'
-            '  (Shop Profile · Invoice · Tax · Payment Methods · Warranty · Workflow…)'));
-      } catch (e) {
-        _add(_fail('6 · shops/\$shopId WRITE',
-            '${_fmt(e)}\n'
-            '  Rule requires: isActive=true AND role in [admin, manager]\n'
-            '  Your role: $role\n'
-            '  Impact: every Settings save button will fail.'));
-      }
-    }
-
-    // ── 7. users (shopId index) READ — staff list ─────────────
-    if (shopId.isEmpty) {
-      _add(_skip('7 · users READ (staff list)', 'Skipped — no shopId'));
-    } else {
-      try {
-        final snap = await db.ref('users')
-            .orderByChild('shopId').equalTo(shopId)
-            .get().timeout(_timeout);
-        final count = (snap.exists && snap.value is Map)
-            ? (snap.value as Map).length : 0;
-        if (count > 0) {
-          _add(_ok('7 · users READ (staff list)',
-              '$count user(s) found for shopId=$shopId\n'
-              '  User Roles page and staff list will load correctly.'));
-        } else {
-          _add(_warn('7 · users READ (staff list)',
-              'Query succeeded but 0 users have shopId=$shopId.\n'
-              '  User Roles / Staff pages will appear empty.\n'
-              '  Fix: ensure every user record has shopId="$shopId" in DB.'));
-        }
-      } catch (e) {
-        _add(_fail('7 · users READ (staff list)',
-            '${_fmt(e)}\n'
-            '  Rule must allow orderByChild("shopId") queries for authenticated users.\n'
-            '  Missing index? Add ".indexOn": ["shopId"] to users/ in rules.'));
-      }
-    }
-
-    // ── 8. users/$uid READ — own stats fields ────────────
-    await () async {
-      try {
-        final snap = await db.ref('users/$uid').get().timeout(_timeout);
-        if (snap.exists && snap.value is Map) {
-          final d = Map<String, dynamic>.from(snap.value as Map);
-          final active      = (d['isActive'] as bool?) ?? false;
-          final totalJobs   = d['totalJobs']   ?? 0;
-          final rating      = d['rating']      ?? 5.0;
-          final hasJoinedAt = d.containsKey('joinedAt');
-          _add(_ok('8 · users/\$uid READ (own stats)',
-              'Record OK  ·  isActive: $active  ·  totalJobs: $totalJobs  ·  rating: $rating\n'
-              '  joinedAt field present: $hasJoinedAt\n'
-              '  All staff stats live in users/ — no separate staff/ node needed.'));
-        } else {
-          _add(_warn('8 · users/\$uid READ (own stats)',
-              'users/$uid exists but has no fields.\n'
-              '  Try logging out and signing back in to re-initialise.'));
-        }
-      } catch (e) {
-        _add(_fail('8 · users/\$uid READ (own stats)', _fmt(e)));
-      }
-    }();
-
-    // ── 9. users READ — full shop staff list ─────────────
-    if (shopId.isEmpty) {
-      _add(_skip('9 · users READ (shop staff list)', 'Skipped — no shopId'));
-    } else {
-      try {
-        final snap = await db.ref('users')
-            .orderByChild('shopId').equalTo(shopId)
-            .get().timeout(_timeout);
-        final count = (snap.exists && snap.value is Map)
-            ? (snap.value as Map).length : 0;
-        if (count > 0) {
-          _add(_ok('9 · users READ (shop staff list)',
-              '$count user record(s) for this shop.\n'
-              '  Staff page and job-assign dropdown will load correctly.\n'
-              '  (staff/ and technicians/ nodes removed — all data in users/)'));
-        } else {
-          _add(_warn('9 · users READ (shop staff list)',
-              'Query OK but 0 users for shopId=$shopId.\n'
-              '  Staff page will be empty — add at least one staff member.'));
-        }
-      } catch (e) {
-        _add(_fail('9 · users READ (shop staff list)',
-            '${_fmt(e)}\n'
-            '  Ensure ".indexOn": ["shopId"] on the users/ node in rules.'));
-      }
-    }
-
-    // ── 10 & 11: Find a non-owner staff member to test against ────────────
-    // Tests 10 & 11 MUST write to a DIFFERENT (non-owner) user uid, not own.
-    // The rule's isOwner!=true guard on TARGET blocks writing to any record
-    // where isOwner==true — including the logged-in admin's own record.
-    // Writing to own uid here would always fail and give a false positive FAIL.
-    String? otherUid;
-    if (shopId.isNotEmpty && (role == 'admin' || role == 'manager')) {
-      try {
-        final staffSnap = await db.ref('users')
-            .orderByChild('shopId').equalTo(shopId)
-            .get().timeout(_timeout);
-        if (staffSnap.exists && staffSnap.value is Map) {
-          final staffMap = Map<String, dynamic>.from(staffSnap.value as Map);
-          for (final entry in staffMap.entries) {
-            if (entry.key == uid) continue;           // skip self
-            final d = Map<String, dynamic>.from(entry.value as Map? ?? {});
-            if ((d['isOwner'] as bool?) == true) continue;
-            otherUid = entry.key;
-            break;
-          }
-        }
-      } catch (_) {}
-    }
-
-    // ── 10. users/$otherUid WRITE isActive (User Roles toggle) ─────
-    if (shopId.isEmpty || role == 'technician' || role == 'reception') {
-      _add(_skip('10 · users/\$uid WRITE (isActive toggle)',
-          'Skipped — role "$role" cannot manage staff'));
-    } else if (otherUid == null) {
-      _add(_warn('10 · users/\$uid WRITE (isActive toggle)',
-          'No other non-owner staff in this shop — cannot test cross-user write.\n'
-          '  Add a second staff member (technician/manager/reception), then re-run.\n'
-          '  Note: the rule intentionally blocks writing to owner records,\n'
-          '  so testing on own uid would always fail even if the rule is correct.'));
-    } else {
-      try {
-        final snap = await db.ref('users/$otherUid/isActive').get().timeout(_timeout);
-        final cur  = snap.value as bool? ?? true;
-        await db.ref('users/$otherUid/isActive').set(cur).timeout(_timeout);
-        _add(_ok('10 · users/\$uid WRITE (isActive toggle)',
-            'Write OK (tested on staff uid ${otherUid.substring(0, 8)}…)\n'
-            '  User Roles activate / deactivate staff will work.'));
-      } catch (e) {
-        _add(_fail('10 · users/\$uid WRITE (isActive toggle)',
-            '${_fmt(e)}\n'
-            '  Tested against: ${otherUid.substring(0, 8)}…\n'
-            '  Impact: toggling staff active status in User Roles page will fail.\n'
-            '  Rule must allow admin/manager to write isActive on non-owner staff\n'
-            '  in the same shop.  Check users/\$uid/.write clause 1.'));
-      }
-    }
-
-    // ── 11. users/$otherUid WRITE role (User Roles role-change) ─────
-    if (shopId.isEmpty || role == 'technician' || role == 'reception') {
-      _add(_skip('11 · users/\$uid WRITE (role change)',
-          'Skipped — role "$role" cannot change staff roles'));
-    } else if (otherUid == null) {
-      _add(_warn('11 · users/\$uid WRITE (role change)',
-          'No other non-owner staff in this shop — cannot test cross-user write.\n'
-          '  Add a second staff member, then re-run diagnostics.'));
-    } else {
-      try {
-        final snap = await db.ref('users/$otherUid/role').get().timeout(_timeout);
-        final cur  = snap.value as String? ?? 'technician';
-        await db.ref('users/$otherUid/role').set(cur).timeout(_timeout);
-        _add(_ok('11 · users/\$uid WRITE (role change)',
-            'Write OK (tested on staff uid ${otherUid.substring(0, 8)}…)\n'
-            '  User Roles role-change dropdown will work.'));
-      } catch (e) {
-        _add(_fail('11 · users/\$uid WRITE (role change)',
-            '${_fmt(e)}\n'
-            '  Tested against: ${otherUid.substring(0, 8)}…\n'
-            '  Impact: changing staff role in User Roles page will fail.\n'
-            '  Rule must allow admin/manager to write role on non-owner staff\n'
-            '  in the same shop.  Check users/\$uid/role/.write child rule.'));
-      }
-    }
-
-    // ── 12. users/$uid WRITE pin reset ────────────────────────
-    if (shopId.isEmpty || role == 'technician' || role == 'reception') {
-      _add(_skip('12 · users/\$uid WRITE (PIN reset)',
-          role == 'technician' || role == 'reception'
-              ? 'Skipped — role "$role" cannot reset PINs'
-              : 'Skipped — no shopId'));
-    } else {
-      try {
-        final snap = await db.ref('users/$uid/pin').get().timeout(_timeout);
-        final cur  = snap.value as String? ?? '';
-        await db.ref('users/$uid/pin').set(cur).timeout(_timeout);
-        _add(_ok('12 · users/\$uid WRITE (PIN reset)',
-            'Write OK — User Roles PIN reset will work'));
-      } catch (e) {
-        _add(_fail('12 · users/\$uid WRITE (PIN reset)',
-            '${_fmt(e)}\n'
-            '  Impact: "Reset PIN" button in User Roles page will fail.\n'
-            '  Rule should allow admin/manager to write users/\$uid/pin.'));
-      }
-    }
-
-    // ── 13. users/$uid WRITE — add/edit staff ────────────
-    if (shopId.isEmpty) {
-      _add(_skip('13 · users/\$uid WRITE (add/edit staff)', 'Skipped — no shopId'));
-    } else {
-      try {
-        final ts = DateTime.now().millisecondsSinceEpoch;
-        await db.ref('users/$uid').update({'_diagTest': ts}).timeout(_timeout);
-        await db.ref('users/$uid/_diagTest').remove().timeout(_timeout);
-        _add(_ok('13 · users/\$uid WRITE (add/edit staff)',
-            'Write OK — Add Staff and Edit Staff will work.\n'
-            '  All staff data now writes to users/ only (staff/ node removed).'));
-      } catch (e) {
-        _add(_fail('13 · users/\$uid WRITE (add/edit staff)',
-            '${_fmt(e)}\n'
-            '  ⚠️  staff/ node has been removed — writes now go to users/.\n'
-            '  Common causes:\n'
-            '  a) Rule requires shops/$shopId/isActive=true but isActive is missing.\n'
-            '  b) Rule requires role=="admin" or "manager" but your role="$role".\n'
-            '  c) Rule clause D requires newData.child("shopId").val() to match\n'
-            '     the admin/manager\'s own shopId.\n\n'
-            '  Verify firebase_rules.json is applied in Firebase Console → Rules.'));
-      }
-    }
-
-    // ── 14. users/$uid WRITE isActive (staff soft-delete) ──
-    if (shopId.isEmpty) {
-      _add(_skip('14 · users/\$uid WRITE (isActive)', 'Skipped — no shopId'));
-    } else {
-      try {
-        final snap = await db.ref('users/$uid/isActive').get().timeout(_timeout);
-        final cur  = snap.value as bool? ?? true;
-        await db.ref('users/$uid/isActive').set(cur).timeout(_timeout);
-        _add(_ok('14 · users/\$uid WRITE (isActive)',
-            'Write OK — "Remove Staff" soft-delete will work.\n'
-            '  isActive is now on users/ only (staff/ node removed).'));
-      } catch (e) {
-        _add(_fail('14 · users/\$uid WRITE (isActive)',
-            '${_fmt(e)}\n'
-            '  Impact: removing a staff member (soft-delete) will fail.'));
-      }
-    }
-
-    // ── 15. customers READ ────────────────────────────────────
-    if (shopId.isEmpty) {
-      _add(_skip('15 · customers READ', 'Skipped — no shopId'));
-    } else {
-      try {
-        final snap = await db.ref('customers')
-            .orderByChild('shopId').equalTo(shopId).get().timeout(_timeout);
-        final count = (snap.exists && snap.value is Map) ? (snap.value as Map).length : 0;
-        _add(_ok('15 · customers READ', '$count customer(s) accessible (Customers + Jobs screens)'));
-      } catch (e) {
-        _add(_fail('15 · customers READ',
-            '${_fmt(e)}\n'
-            '  Ensure ".indexOn": ["shopId"] on customers/ in rules.'));
-      }
-    }
-
-    // ── 16. jobs READ ─────────────────────────────────────────
-    if (shopId.isEmpty) {
-      _add(_skip('16 · jobs READ', 'Skipped — no shopId'));
-    } else {
-      try {
-        final snap = await db.ref('jobs')
-            .orderByChild('shopId').equalTo(shopId).get().timeout(_timeout);
-        final count = (snap.exists && snap.value is Map) ? (snap.value as Map).length : 0;
-        _add(_ok('16 · jobs READ', '$count job(s) accessible (Jobs screen)'));
-      } catch (e) {
-        _add(_fail('16 · jobs READ',
-            '${_fmt(e)}\n  Ensure ".indexOn": ["shopId"] on jobs/ in rules.'));
-      }
-    }
-
-    // ── 17. products READ ─────────────────────────────────────
-    if (shopId.isEmpty) {
-      _add(_skip('17 · products READ', 'Skipped — no shopId'));
-    } else {
-      try {
-        final snap = await db.ref('products')
-            .orderByChild('shopId').equalTo(shopId).get().timeout(_timeout);
-        final count = (snap.exists && snap.value is Map) ? (snap.value as Map).length : 0;
-        _add(_ok('17 · products READ', '$count product(s) accessible (Inventory + POS)'));
-      } catch (e) {
-        _add(_fail('17 · products READ',
-            '${_fmt(e)}\n  Ensure ".indexOn": ["shopId"] on products/ in rules.'));
-      }
-    }
-
-    // ── 18. transactions READ ─────────────────────────────────
-    if (shopId.isEmpty) {
-      _add(_skip('18 · transactions READ', 'Skipped — no shopId'));
-    } else {
-      try {
-        final snap = await db.ref('transactions')
-            .orderByChild('shopId').equalTo(shopId).get().timeout(_timeout);
-        final count = (snap.exists && snap.value is Map) ? (snap.value as Map).length : 0;
-        _add(_ok('18 · transactions READ', '$count transaction(s) accessible (Finance screen)'));
-      } catch (e) {
-        _add(_fail('18 · transactions READ',
-            '${_fmt(e)}\n  Ensure ".indexOn": ["shopId"] on transactions/ in rules.'));
-      }
-    }
-
-    // ── 19. stock_history READ ────────────────────────────────
-    if (shopId.isEmpty) {
-      _add(_skip('19 · stock_history READ', 'Skipped — no shopId'));
-    } else {
-      try {
-        final snap = await db.ref('stock_history')
-            .orderByChild('shopId').equalTo(shopId).get().timeout(_timeout);
-        final count = (snap.exists && snap.value is Map) ? (snap.value as Map).length : 0;
-        _add(_ok('19 · stock_history READ', '$count record(s) (used by Demo Data clear)'));
-      } catch (e) {
-        _add(_warn('19 · stock_history READ',
-            '${_fmt(e)}\n'
-            '  Non-critical — only affects Demo Data Tools "Clear All" button.\n'
-            '  Ensure ".indexOn": ["shopId"] on stock_history/ if needed.'));
-      }
-    }
-
-    // ── 20. diagnostics/$uid WRITE — self-log ────────────────
-    try {
-      await db.ref('diagnostics/$uid').update({
-        'lastRunAt':    DateTime.now().toUtc().toIso8601String(),
-        'shopId':       shopId,
-        'role':         role,
-        'uid':          uid,
-        'totalChecks':  _results.length + 1,
-      }).timeout(_timeout);
-      _add(_ok('20 · diagnostics/\$uid WRITE', 'Audit log write OK'));
-    } catch (e) {
-      _add(_fail('20 · diagnostics/\$uid WRITE',
-          '${_fmt(e)}\n'
-          '  Rule should allow auth.uid==\$uid.\n'
-          '  Check your security rules for the diagnostics/ node.'));
-    }
-
-    _done();
-  }
-
-  // ── Build ──────────────────────────────────────────────────
-  @override
-  Widget build(BuildContext context) {
-    final failCount = _results.where((r) => r.detail.startsWith('❌')).length;
-    final warnCount = _results.where((r) => r.detail.startsWith('⚠️')).length;
-    final okCount   = _results.where((r) => r.detail.startsWith('✅')).length;
-
-    return _Page(
-      title: 'Firebase Diagnostics',
-      subtitle: 'v2 — all 21 nodes & operations tested',
-      children: [
-        if (_hasRun && !_running)
-          Container(
-            margin: const EdgeInsets.only(bottom: 14),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: failCount > 0
-                  ? C.red.withValues(alpha: 0.1)
-                  : warnCount > 0
-                      ? C.yellow.withValues(alpha: 0.1)
-                      : C.green.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                  color: failCount > 0
-                      ? C.red.withValues(alpha: 0.4)
-                      : warnCount > 0
-                          ? C.yellow.withValues(alpha: 0.4)
-                          : C.green.withValues(alpha: 0.4)),
-            ),
-            child: Row(children: [
-              Text(failCount > 0 ? '❌' : warnCount > 0 ? '⚠️' : '✅',
-                  style: const TextStyle(fontSize: 22)),
-              const SizedBox(width: 10),
-              Expanded(child: Text(
-                failCount > 0
-                    ? '$failCount FAILED · $warnCount warnings · $okCount passed'
-                    : warnCount > 0
-                        ? 'All critical checks passed · $warnCount warning(s)'
-                        : 'All ${_results.length} checks passed ✨',
-                style: GoogleFonts.syne(
-                    fontWeight: FontWeight.w700, fontSize: 13,
-                    color: failCount > 0 ? C.red : warnCount > 0 ? C.yellow : C.green),
-              )),
-            ]),
-          ),
-
-        if (!_hasRun)
-          _infoBanner(
-            'Tap "Run Diagnostics" to test every Firebase node and operation.\n\n'
-            'Coverage: SDK · RTDB · Auth · users R/W · shops R/W · '
-            'staff R/W · staff list · customers · jobs · products · '
-            'transactions · stock_history · diagnostics — 21 checks total.\n\n'
-            'Each failure shows the exact security rule fix needed.',
-          ),
-
-        ..._results.map(_buildRow),
-
-        if (_running)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(children: [
-              const SizedBox(width: 18, height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: C.primary)),
-              const SizedBox(width: 12),
-              Text('Running checks… (${_results.length} done)',
-                  style: GoogleFonts.syne(fontSize: 13, color: C.textMuted)),
-            ]),
-          ),
-
-        const SizedBox(height: 8),
-        SizedBox(
-          width: double.infinity, height: 50,
-          child: ElevatedButton(
-            onPressed: _running ? null : _run,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: C.primary, foregroundColor: C.bg,
-              disabledBackgroundColor: C.primary.withValues(alpha: 0.4),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              elevation: 0,
-            ),
-            child: _running
-                ? const SizedBox(width: 22, height: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2.5, color: C.bg))
-                : Text(_hasRun ? '🔄  Re-run Diagnostics' : '🧪  Run Diagnostics',
-                    style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 14)),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildRow(_DiagResult r) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-      decoration: BoxDecoration(
-        color: r.color.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(11),
-        border: Border.all(color: r.color.withValues(alpha: 0.25)),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(r.label,
-            style: GoogleFonts.syne(
-                fontSize: 10, fontWeight: FontWeight.w800,
-                color: C.textMuted, letterSpacing: 0.9)),
-        const SizedBox(height: 5),
-        Text(r.detail,
-            style: GoogleFonts.syne(fontSize: 12, color: r.color, height: 1.5)),
-      ]),
-    ),
-  );
-}
-// ═════════════════════════════════════════════════════════════
 // 8. USER ROLES & ACCESS
 // ═════════════════════════════════════════════════════════════
 // ═════════════════════════════════════════════════════════════
@@ -2386,7 +1951,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
     }
     setState(() { _loadingStaff = true; _loadError = ''; });
     try {
-      await ref.read(staffProvider.notifier).loadFromFirebase(session.shopId);
+      await ref.read(staffProvider.notifier).loadFromSupabase(session.shopId);
       for (final s in ref.read(staffProvider)) {
         _pinCtrls.putIfAbsent(s.uid, () => TextEditingController());
       }
@@ -2428,7 +1993,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
   }
 
   void _snack(String msg, Color bg) => ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text(msg, style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 13)),
+    SnackBar(content: Text(msg, style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13)),
              backgroundColor: bg, behavior: SnackBarBehavior.floating,
              duration: const Duration(seconds: 3)));
 
@@ -2448,9 +2013,9 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
         ),
         title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('User Roles & Access',
-              style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 16, color: C.white)),
+              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 16, color: C.white)),
           Text('Assign roles · reset PINs',
-              style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
+              style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
         ]),
         actions: [
           if (_pendingRoles.isNotEmpty)
@@ -2458,7 +2023,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
               onPressed: _saveRoles,
               icon: const Icon(Icons.save_rounded, size: 16, color: C.primary),
               label: Text('Save ${_pendingRoles.length}',
-                  style: GoogleFonts.syne(fontWeight: FontWeight.w800, color: C.primary, fontSize: 13)),
+                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, color: C.primary, fontSize: 13)),
             ),
           IconButton(
             icon: _loadingStaff
@@ -2475,8 +2040,8 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
             Container(height: 1, color: C.border),
             TabBar(
               controller: _tabs,
-              labelStyle: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 13),
-              unselectedLabelStyle: GoogleFonts.syne(fontWeight: FontWeight.w600, fontSize: 13),
+              labelStyle: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13),
+              unselectedLabelStyle: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13),
               labelColor: C.primary,
               unselectedLabelColor: C.textMuted,
               indicatorColor: C.primary,
@@ -2513,16 +2078,16 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
           const Text('❌', style: TextStyle(fontSize: 40)),
           const SizedBox(height: 12),
-          Text('Failed to load staff', style: GoogleFonts.syne(
+          Text('Failed to load staff', style: GoogleFonts.inter(
               fontSize: 15, color: C.red, fontWeight: FontWeight.w700)),
           const SizedBox(height: 6),
-          Text(_loadError, style: GoogleFonts.syne(fontSize: 11, color: C.textMuted),
+          Text(_loadError, style: GoogleFonts.inter(fontSize: 11, color: C.textMuted),
               textAlign: TextAlign.center),
           const SizedBox(height: 16),
           ElevatedButton.icon(
             onPressed: _loadStaff,
             icon: const Icon(Icons.refresh_rounded, size: 18),
-            label: Text('Retry', style: GoogleFonts.syne(fontWeight: FontWeight.w700)),
+            label: Text('Retry', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
             style: ElevatedButton.styleFrom(
                 backgroundColor: C.primary, foregroundColor: C.bg,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
@@ -2535,17 +2100,17 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
       return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
         const Text('👥', style: TextStyle(fontSize: 52)),
         const SizedBox(height: 12),
-        Text('No staff found', style: GoogleFonts.syne(
+        Text('No staff found', style: GoogleFonts.plusJakartaSans(
             fontSize: 17, fontWeight: FontWeight.w800, color: C.white)),
         const SizedBox(height: 6),
         Text('Tap ↻ to load staff from Firebase.',
-            style: GoogleFonts.syne(fontSize: 13, color: C.textMuted)),
+            style: GoogleFonts.inter(fontSize: 13, color: C.textMuted)),
         const SizedBox(height: 20),
         ElevatedButton.icon(
           onPressed: _loadStaff,
           icon: const Icon(Icons.refresh_rounded),
           label: Text('Load Staff',
-              style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 14)),
+              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 14)),
           style: ElevatedButton.styleFrom(
               backgroundColor: C.primary, foregroundColor: C.bg,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -2573,7 +2138,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
             'Tap a role pill to change it, then tap Save. '
             'Owner role is permanent and cannot be changed. '
             'PIN reset takes effect immediately.',
-            style: GoogleFonts.syne(fontSize: 12, color: C.textMuted, height: 1.4),
+            style: GoogleFonts.inter(fontSize: 12, color: C.textMuted, height: 1.4),
           ),
         ),
         // Active staff
@@ -2583,7 +2148,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
           Padding(
             padding: const EdgeInsets.fromLTRB(0, 16, 0, 8),
             child: Text('INACTIVE ACCOUNTS',
-                style: GoogleFonts.syne(fontSize: 10, fontWeight: FontWeight.w800,
+                style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.w800,
                     color: C.textMuted, letterSpacing: 1.2)),
           ),
           ...inactive.map((s) => Opacity(opacity: 0.5, child: _staffCard(s))),
@@ -2595,7 +2160,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
               onPressed: _saveRoles,
               icon: const Icon(Icons.save_rounded, size: 18),
               label: Text('Save ${_pendingRoles.length} role change(s)',
-                  style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 14)),
+                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 14)),
               style: ElevatedButton.styleFrom(
                 backgroundColor: C.primary, foregroundColor: C.bg,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -2642,7 +2207,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
                 children: [
               Row(children: [
                 Flexible(child: Text(s.displayName,
-                    style: GoogleFonts.syne(fontWeight: FontWeight.w800,
+                    style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800,
                         fontSize: 14, color: C.white),
                     overflow: TextOverflow.ellipsis)),
                 if (s.isOwner) ...[
@@ -2652,7 +2217,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
                     decoration: BoxDecoration(
                       color: C.yellow.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(5)),
-                    child: Text('OWNER', style: GoogleFonts.syne(
+                    child: Text('OWNER', style: GoogleFonts.plusJakartaSans(
                         fontSize: 9, fontWeight: FontWeight.w800, color: C.yellow)),
                   ),
                 ],
@@ -2663,14 +2228,14 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
                     decoration: BoxDecoration(
                         color: C.primary.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(5)),
-                    child: Text('UNSAVED', style: GoogleFonts.syne(
+                    child: Text('UNSAVED', style: GoogleFonts.plusJakartaSans(
                         fontSize: 9, fontWeight: FontWeight.w800, color: C.primary)),
                   ),
                 ],
               ]),
               const SizedBox(height: 2),
               Text(s.email.isNotEmpty ? s.email : s.phone,
-                  style: GoogleFonts.syne(fontSize: 11, color: C.textMuted),
+                  style: GoogleFonts.inter(fontSize: 11, color: C.textMuted),
                   overflow: TextOverflow.ellipsis),
             ])),
           ]),
@@ -2682,7 +2247,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
         if (!s.isOwner) ...[
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
-            child: Text('ROLE', style: GoogleFonts.syne(
+            child: Text('ROLE', style: GoogleFonts.plusJakartaSans(
                 fontSize: 10, fontWeight: FontWeight.w800,
                 color: C.textMuted, letterSpacing: 1.0)),
           ),
@@ -2710,7 +2275,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     Text(rm.$1, style: const TextStyle(fontSize: 15)),
                     const SizedBox(width: 5),
-                    Text(rm.$2, style: GoogleFonts.syne(
+                    Text(rm.$2, style: GoogleFonts.inter(
                         fontSize: 12, fontWeight: FontWeight.w700,
                         color: sel ? rm.$3 : C.textMuted)),
                   ]),
@@ -2727,7 +2292,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
           Padding(
             padding: const EdgeInsets.all(14),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('RESET PIN', style: GoogleFonts.syne(
+              Text('RESET PIN', style: GoogleFonts.plusJakartaSans(
                   fontSize: 10, fontWeight: FontWeight.w800,
                   color: C.textMuted, letterSpacing: 1.0)),
               const SizedBox(height: 8),
@@ -2739,11 +2304,11 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
                     maxLength: 4,
                     keyboardType: TextInputType.number,
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    style: GoogleFonts.syne(
+                    style: GoogleFonts.inter(
                         fontSize: 20, letterSpacing: 10, color: C.white),
                     decoration: InputDecoration(
                       hintText: '  ●  ●  ●  ●',
-                      hintStyle: GoogleFonts.syne(
+                      hintStyle: GoogleFonts.inter(
                           fontSize: 14, color: C.textDim, letterSpacing: 4),
                       counterText: '',
                       filled: true, fillColor: C.bgElevated,
@@ -2774,7 +2339,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
                       padding: const EdgeInsets.symmetric(horizontal: 18),
                     ),
                     child: Text('Reset',
-                        style: GoogleFonts.syne(fontWeight: FontWeight.w800,
+                        style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800,
                             fontSize: 13)),
                   ),
                 ),
@@ -2783,7 +2348,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
                 Padding(
                   padding: const EdgeInsets.only(top: 5),
                   child: Text('Current PIN: ${'●' * s.pin.length}  (saved)',
-                      style: GoogleFonts.syne(fontSize: 10, color: C.textMuted)),
+                      style: GoogleFonts.inter(fontSize: 10, color: C.textMuted)),
                 ),
             ]),
           ),
@@ -2840,7 +2405,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
             Expanded(child: Column(children: [
               Text(colIcons[i], style: const TextStyle(fontSize: 18)),
               const SizedBox(height: 2),
-              Text(colLabels[i], style: GoogleFonts.syne(
+              Text(colLabels[i], style: GoogleFonts.plusJakartaSans(
                   fontSize: 9, fontWeight: FontWeight.w800, color: colColors[i])),
             ])),
         ]),
@@ -2851,7 +2416,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
           // Section header
           ? Padding(
               padding: const EdgeInsets.fromLTRB(0, 16, 0, 4),
-              child: Text(row.$1, style: GoogleFonts.syne(
+              child: Text(row.$1, style: GoogleFonts.plusJakartaSans(
                   fontSize: 10, fontWeight: FontWeight.w800,
                   color: C.textMuted, letterSpacing: 1.1)),
             )
@@ -2865,13 +2430,13 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
               ),
               child: Row(children: [
                 Expanded(flex: 4, child: Text(row.$1,
-                    style: GoogleFonts.syne(fontSize: 12, color: C.text))),
+                    style: GoogleFonts.inter(fontSize: 12, color: C.text))),
                 ...List.generate(4, (i) {
                   final allowed = [row.$2, row.$3, row.$4, row.$5][i] == true;
                   return Expanded(child: Center(child: allowed
                       ? Icon(Icons.check_circle_rounded, size: 17,
                           color: colColors[i])
-                      : Text('—', style: GoogleFonts.syne(
+                      : Text('—', style: GoogleFonts.plusJakartaSans(
                           fontSize: 16, color: C.textDim,
                           fontWeight: FontWeight.w900))));
                 }),
@@ -2887,7 +2452,7 @@ class _UserRolesState extends ConsumerState<UserRolesPage>
           ),
           child: Text('Permissions are enforced by Firebase Security Rules, '
               'not just in the app UI. Changing a role takes effect immediately.',
-              style: GoogleFonts.syne(fontSize: 11, color: C.textMuted, height: 1.5)),
+              style: GoogleFonts.inter(fontSize: 11, color: C.textMuted, height: 1.5)),
         ),
       ],
     );
@@ -2943,7 +2508,7 @@ class _WhatsappPageState extends State<WhatsappPage> {
           icon: Icon(_connected ? Icons.check_circle : Icons.link,
               size: 18, color: C.bg),
           label: Text(_connected ? 'Connected ✓' : 'Test Connection',
-              style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 14)),
+              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 14)),
           style: ElevatedButton.styleFrom(
             backgroundColor: _connected ? C.green : C.primary,
             foregroundColor: C.bg,
@@ -2973,17 +2538,17 @@ class _WhatsappPageState extends State<WhatsappPage> {
         child: SCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
             children: [
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Text(t.name, style: GoogleFonts.syne(fontWeight: FontWeight.w700,
+            Text(t.name, style: GoogleFonts.inter(fontWeight: FontWeight.w700,
                 fontSize: 13, color: C.white)),
             TextButton(onPressed: () => _editTemplate(context, t),
-                child: Text('Edit', style: GoogleFonts.syne(
+                child: Text('Edit', style: GoogleFonts.inter(
                     color: C.primary, fontWeight: FontWeight.w700))),
           ]),
           const SizedBox(height: 6),
           Container(padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(color: C.bgElevated,
                 borderRadius: BorderRadius.circular(8)),
-            child: Text(t.body, style: GoogleFonts.syne(
+            child: Text(t.body, style: GoogleFonts.inter(
                 fontSize: 11, color: C.textMuted, height: 1.5))),
         ])),
       )),
@@ -2998,23 +2563,23 @@ class _WhatsappPageState extends State<WhatsappPage> {
       builder: (_) => AlertDialog(
         backgroundColor: C.bgCard,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('Edit: ${t.name}', style: GoogleFonts.syne(
+        title: Text('Edit: ${t.name}', style: GoogleFonts.plusJakartaSans(
             fontWeight: FontWeight.w800, color: C.white)),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           _infoBanner('Variables: {name} {device} {amount} {job_num} {status} {days}'),
           TextFormField(controller: ctrl, maxLines: 5,
-              style: GoogleFonts.syne(fontSize: 13, color: C.text),
+              style: GoogleFonts.inter(fontSize: 13, color: C.text),
               decoration: const InputDecoration()),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context),
-              child: Text('Cancel', style: GoogleFonts.syne(color: C.textMuted))),
+              child: Text('Cancel', style: GoogleFonts.inter(color: C.textMuted))),
           ElevatedButton(
             onPressed: () { setState(() => t.body = ctrl.text); Navigator.pop(context); },
             style: ElevatedButton.styleFrom(backgroundColor: C.primary,
                 foregroundColor: C.bg,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-            child: Text('Save Template', style: GoogleFonts.syne(fontWeight: FontWeight.w800)),
+            child: Text('Save Template', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
           ),
         ],
       ),
@@ -3059,7 +2624,7 @@ class _SmsPageState extends State<SmsPage> {
             child: Row(children: [
               Text(_providerIcon(p), style: const TextStyle(fontSize: 20)),
               const SizedBox(width: 12),
-              Expanded(child: Text(p, style: GoogleFonts.syne(fontWeight: FontWeight.w700,
+              Expanded(child: Text(p, style: GoogleFonts.inter(fontWeight: FontWeight.w700,
                   fontSize: 13, color: sel ? C.primary : C.white))),
               if (sel) const Icon(Icons.check_circle, color: C.primary, size: 20),
             ]),
@@ -3214,9 +2779,9 @@ class _PaymentGatewayState extends State<PaymentGatewayPage> {
               const SizedBox(width: 12),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                Text(g.$2, style: GoogleFonts.syne(fontWeight: FontWeight.w700,
+                Text(g.$2, style: GoogleFonts.inter(fontWeight: FontWeight.w700,
                     fontSize: 14, color: sel ? C.primary : C.white)),
-                Text(g.$4, style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
+                Text(g.$4, style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
               ])),
               if (sel) const Icon(Icons.check_circle, color: C.primary),
             ]),
@@ -3269,9 +2834,9 @@ class AccountingPage extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-              Text(a.$2, style: GoogleFonts.syne(fontWeight: FontWeight.w700,
+              Text(a.$2, style: GoogleFonts.inter(fontWeight: FontWeight.w700,
                   fontSize: 14, color: C.white)),
-              Text(a.$4, style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
+              Text(a.$4, style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
             ])),
             SizedBox(width: 80,
               child: ElevatedButton(
@@ -3281,7 +2846,7 @@ class AccountingPage extends StatelessWidget {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     padding: const EdgeInsets.symmetric(vertical: 8)),
                 child: Text(a.$1 == 'csv' ? 'Export' : 'Connect',
-                    style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 12)),
+                    style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 12)),
               ),
             ),
           ]),
@@ -3360,13 +2925,13 @@ class _AiPageState extends State<AiPage> {
         child: Column(children: [
           const Text('🤖', style: TextStyle(fontSize: 44)),
           const SizedBox(height: 10),
-          Text('Claude AI', style: GoogleFonts.syne(fontSize: 22,
+          Text('Claude AI', style: GoogleFonts.plusJakartaSans(fontSize: 22,
               fontWeight: FontWeight.w900, color: Colors.white)),
-          Text('by Anthropic', style: GoogleFonts.syne(
+          Text('by Anthropic', style: GoogleFonts.inter(
               fontSize: 13, color: Colors.white60)),
           const SizedBox(height: 8),
           Text('Smart repair diagnosis, pricing suggestions, and parts recommendations',
-              style: GoogleFonts.syne(fontSize: 12, color: Colors.white70),
+              style: GoogleFonts.inter(fontSize: 12, color: Colors.white70),
               textAlign: TextAlign.center),
         ]),
       ),
@@ -3438,7 +3003,7 @@ class _AppLockState extends State<AppLockPage> {
           onChanged: (v) => setState(() => _lockAfter = v.round()),
         ),
         Center(child: Text('Lock after $_lockAfter minute${_lockAfter == 1 ? "" : "s"}',
-            style: GoogleFonts.syne(fontSize: 13, color: C.textMuted))),
+            style: GoogleFonts.inter(fontSize: 13, color: C.textMuted))),
         const SizedBox(height: 16),
       ],
       if (_pinEnabled) ...[
@@ -3447,10 +3012,10 @@ class _AppLockState extends State<AppLockPage> {
           controller: _pin, obscureText: true, maxLength: 4,
           keyboardType: TextInputType.number,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          style: GoogleFonts.syne(fontSize: 18, letterSpacing: 12, color: C.white),
+          style: GoogleFonts.inter(fontSize: 18, letterSpacing: 12, color: C.white),
           decoration: InputDecoration(
             labelText: 'Enter 4-digit PIN',
-            labelStyle: GoogleFonts.syne(color: C.textMuted),
+            labelStyle: GoogleFonts.inter(color: C.textMuted),
             counterText: '',
           ),
           onChanged: (_) => setState(() => _pinMismatch = false),
@@ -3460,10 +3025,10 @@ class _AppLockState extends State<AppLockPage> {
           controller: _confirm, obscureText: true, maxLength: 4,
           keyboardType: TextInputType.number,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          style: GoogleFonts.syne(fontSize: 18, letterSpacing: 12, color: C.white),
+          style: GoogleFonts.inter(fontSize: 18, letterSpacing: 12, color: C.white),
           decoration: InputDecoration(
             labelText: 'Confirm PIN',
-            labelStyle: GoogleFonts.syne(color: C.textMuted),
+            labelStyle: GoogleFonts.inter(color: C.textMuted),
             counterText: '',
             errorText: _pinMismatch ? 'PINs do not match' : null,
           ),
@@ -3484,62 +3049,231 @@ class _AppLockState extends State<AppLockPage> {
 }
 
 // ═════════════════════════════════════════════════════════════
-// 18. AUDIT LOGS
+// 18. AUDIT LOGS (OWNER ONLY)
 // ═════════════════════════════════════════════════════════════
-class AuditLogsPage extends StatelessWidget {
+class AuditLogsPage extends ConsumerStatefulWidget {
   const AuditLogsPage({super.key});
 
-  static const _logs = [
-    ('2025-02-22 14:33', 'Admin',         'Job JOB-2025-0042 status → In Repair', '🔧'),
-    ('2025-02-22 13:15', 'Suresh Kumar',  'Parts updated for JOB-2025-0041',       '🔩'),
-    ('2025-02-22 11:00', 'Reception',     'New customer Vikram Singh added',        '👤'),
-    ('2025-02-22 10:45', 'Admin',         'Product stock adjusted: S24 Screen +5', '📦'),
-    ('2025-02-22 10:30', 'Admin',         'Invoice INV-2025-0041 generated',       '🧾'),
-    ('2025-02-21 17:45', 'Ravi Sharma',   'Job JOB-2025-0039 cancelled',           '❌'),
-    ('2025-02-21 16:00', 'Admin',         'Settings: Tax rate changed 18% → 18%',  '⚙️'),
-    ('2025-02-21 14:22', 'Reception',     'Job JOB-2025-0040 checked in',          '📥'),
-    ('2025-02-21 12:00', 'Suresh Kumar',  'Job JOB-2025-0038 status → Completed',  '🏁'),
-  ];
+  @override
+  ConsumerState<AuditLogsPage> createState() => _AuditLogsPageState();
+}
+
+class _AuditLogsPageState extends ConsumerState<AuditLogsPage> {
+  bool _loading = true;
 
   @override
-  Widget build(BuildContext context) => _Page(
-    title: 'Audit Logs', subtitle: 'Complete activity trail',
-    actions: [IconButton(icon: const Icon(Icons.download_outlined, color: C.primary),
-        onPressed: () {})],
-    children: [
-      _infoBanner('All actions by all users are logged here. '
-          'Logs cannot be deleted.', color: C.textMuted),
-      ..._logs.map((l) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(color: C.bgCard,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: C.border)),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Container(width: 36, height: 36,
-              decoration: BoxDecoration(color: C.primary.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8)),
-              child: Center(child: Text(l.$4, style: const TextStyle(fontSize: 17)))),
-            const SizedBox(width: 10),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(l.$3, style: GoogleFonts.syne(fontSize: 13, color: C.text, height: 1.4)),
-              const SizedBox(height: 4),
-              Row(children: [
-                const Icon(Icons.person_outline, size: 12, color: C.textMuted),
-                const SizedBox(width: 4),
-                Text(l.$2, style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
-                const Spacer(),
-                const Icon(Icons.access_time_outlined, size: 12, color: C.textMuted),
-                const SizedBox(width: 4),
-                Text(l.$1, style: GoogleFonts.syne(fontSize: 10, color: C.textMuted)),
-              ]),
-            ])),
-          ]),
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    final session = ref.read(currentUserProvider).asData?.value;
+    if (session != null && session.shopId.isNotEmpty) {
+      await ref.read(auditLogsProvider.notifier).loadFromSupabase(session.shopId);
+    }
+    if (mounted) {
+      setState(() => _loading = false);
+    }
+  }
+
+  String _formatTimestamp(String timestamp) {
+    try {
+      final dt = DateTime.parse(timestamp);
+      return '${dt.day}/${dt.month}/${dt.year} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
+    } catch (e) {
+      return timestamp;
+    }
+  }
+
+  String _getActionIcon(String action) {
+    switch (action.toLowerCase()) {
+      case 'create':
+        return '➕';
+      case 'update':
+        return '✏️';
+      case 'delete':
+        return '🗑️';
+      case 'view':
+        return '👁️';
+      default:
+        return '📋';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final userAsync = ref.watch(currentUserProvider);
+    final session = userAsync.asData?.value;
+    final logs = ref.watch(auditLogsProvider);
+
+    // Only show if user is owner
+    if (session == null || !session.isOwner) {
+      return _Page(
+        title: 'Audit Logs',
+        subtitle: 'Owner-only feature',
+        children: [
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Text(
+                'Only the shop owner can view audit logs.',
+                style: GoogleFonts.inter(color: C.textMuted, fontSize: 16),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (_loading) {
+      return const _Page(
+        title: 'Audit Logs',
+        subtitle: 'Loading...',
+        children: [
+          Center(child: CircularProgressIndicator()),
+        ],
+      );
+    }
+
+    return _Page(
+      title: 'Audit Logs',
+      subtitle: 'Complete activity trail',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh, color: C.primary),
+          onPressed: _loadData,
         ),
-      )),
-    ],
-  );
+      ],
+      children: [
+        _infoBanner('All actions by all users are logged here. '
+            'Logs cannot be deleted.', color: C.textMuted),
+        if (logs.isEmpty)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                children: [
+                  const Text('📋', style: TextStyle(fontSize: 48)),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No logs yet',
+                    style: GoogleFonts.inter(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: C.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          ...logs.map((log) {
+            final action = log['action'] as String? ?? '';
+            final entity = log['entity'] as String? ?? '';
+            final entityId = log['entityId'] as String? ?? '';
+            final userId = log['userId'] as String? ?? '';
+            final timestamp = log['timestamp'] as String? ?? '';
+            final details = log['details'] as Map? ?? {};
+
+            // Get display text
+            String displayText;
+            if (details['message'] != null) {
+              displayText = details['message'].toString();
+            } else if (details.containsKey(entity)) {
+              displayText = '$action $entity ${entityId.isNotEmpty ? '- $entityId' : ''}';
+            } else {
+              displayText = '$action $entity ${entityId.isNotEmpty ? '- $entityId' : ''}';
+            }
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: C.bgCard,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: C.border),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: C.primary.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Center(
+                        child: Text(
+                          _getActionIcon(action),
+                          style: const TextStyle(fontSize: 17),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            displayText,
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              color: C.text,
+                              height: 1.4,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.person_outline,
+                                size: 12,
+                                color: C.textMuted,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                userId.isNotEmpty
+                                    ? '${userId.substring(0, 8)}...'
+                                    : 'Unknown',
+                                style: GoogleFonts.inter(
+                                  fontSize: 11,
+                                  color: C.textMuted,
+                                ),
+                              ),
+                              const Spacer(),
+                              const Icon(
+                                Icons.access_time_outlined,
+                                size: 12,
+                                color: C.textMuted,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                timestamp.isNotEmpty
+                                    ? _formatTimestamp(timestamp)
+                                    : '',
+                                style: GoogleFonts.inter(
+                                  fontSize: 10,
+                                  color: C.textMuted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+      ],
+    );
+  }
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -3565,13 +3299,13 @@ class _BackupState extends State<BackupPage> {
         child: Column(children: [
           const Text('✅', style: TextStyle(fontSize: 40)),
           const SizedBox(height: 8),
-          Text('All data backed up', style: GoogleFonts.syne(
+          Text('All data backed up', style: GoogleFonts.inter(
               fontSize: 15, fontWeight: FontWeight.w700, color: C.white)),
-          Text('Last backup: Today 06:00 AM', style: GoogleFonts.syne(
+          Text('Last backup: Today 06:00 AM', style: GoogleFonts.inter(
               fontSize: 12, color: C.green)),
           const SizedBox(height: 4),
           Text('Size: 2.4 MB  ·  384 jobs  ·  47 customers',
-              style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
+              style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
         ]),
       ),
       const SizedBox(height: 16),
@@ -3590,7 +3324,7 @@ class _BackupState extends State<BackupPage> {
                 border: Border.all(color: sel ? C.primary : C.border, width: sel ? 2 : 1),
               ),
               child: Text(f, textAlign: TextAlign.center,
-                  style: GoogleFonts.syne(fontSize: 12, fontWeight: FontWeight.w700,
+                  style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700,
                       color: sel ? C.primary : C.textMuted)),
             ),
           ),
@@ -3614,7 +3348,7 @@ class _BackupState extends State<BackupPage> {
               child: Row(children: [
                 Text(_locIcon(loc), style: const TextStyle(fontSize: 22)),
                 const SizedBox(width: 12),
-                Expanded(child: Text(loc, style: GoogleFonts.syne(fontWeight: FontWeight.w700,
+                Expanded(child: Text(loc, style: GoogleFonts.inter(fontWeight: FontWeight.w700,
                     fontSize: 13, color: _location == loc ? C.primary : C.white))),
                 if (_location == loc) const Icon(Icons.check_circle, color: C.primary),
               ]),
@@ -3633,7 +3367,7 @@ class _BackupState extends State<BackupPage> {
                   child: CircularProgressIndicator(strokeWidth: 2.5, color: C.bg))
               : const Icon(Icons.cloud_upload_outlined, size: 20),
           label: Text(_backing ? 'Backing up...' : '☁️  Backup Now',
-              style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 14)),
+              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 14)),
           style: ElevatedButton.styleFrom(backgroundColor: C.primary, foregroundColor: C.bg,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               elevation: 0),
@@ -3645,7 +3379,7 @@ class _BackupState extends State<BackupPage> {
           onPressed: () {},
           icon: const Icon(Icons.restore_outlined, size: 20),
           label: Text('Restore from Backup',
-              style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 14)),
+              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 14)),
           style: OutlinedButton.styleFrom(foregroundColor: C.textMuted,
               side: const BorderSide(color: C.border),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
@@ -3708,9 +3442,9 @@ class _ExportPageState extends State<ExportPage> {
               Text(e.$2, style: const TextStyle(fontSize: 24)),
               const SizedBox(width: 12),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(e.$3, style: GoogleFonts.syne(fontWeight: FontWeight.w700,
+                Text(e.$3, style: GoogleFonts.inter(fontWeight: FontWeight.w700,
                     fontSize: 13, color: C.white)),
-                Text(e.$4, style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
+                Text(e.$4, style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
               ])),
               const SizedBox(width: 8),
               SizedBox(width: 80, height: 36,
@@ -3730,7 +3464,7 @@ class _ExportPageState extends State<ExportPage> {
                   child: loading
                       ? const SizedBox(width: 16, height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2, color: C.primary))
-                      : Text('Export', style: GoogleFonts.syne(
+                      : Text('Export', style: GoogleFonts.plusJakartaSans(
                           fontWeight: FontWeight.w800, fontSize: 12)),
                 ),
               ),

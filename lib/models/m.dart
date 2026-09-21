@@ -9,57 +9,58 @@
 
 class RoleAccess {
   // ── Job permissions ──────────────────────────────────────────
-  static bool canCreateJob(String role)   => _any(role, ['admin','manager','reception']);
-  static bool canEditJob(String role)     => _any(role, ['admin','manager','reception','technician']);
-  static bool canDeleteJob(String role)   => _any(role, ['admin','manager']);
-  static bool canAssignJob(String role)   => _any(role, ['admin','manager']);
-  static bool canUpdateStatus(String role)=> _any(role, ['admin','manager','technician']);
-  static bool canCancelJob(String role)   => _any(role, ['admin','manager']);
-  static bool canReopenJob(String role)   => _any(role, ['admin','manager']);
+  static bool canCreateJob(String role)   => _any(role, ['super_admin','admin','manager','reception']);
+  static bool canEditJob(String role)     => _any(role, ['super_admin','admin','manager','reception','technician']);
+  static bool canDeleteJob(String role)   => _any(role, ['super_admin','admin','manager']);
+  static bool canAssignJob(String role)   => _any(role, ['super_admin','admin','manager']);
+  static bool canUpdateStatus(String role)=> _any(role, ['super_admin','admin','manager','technician']);
+  static bool canCancelJob(String role)   => _any(role, ['super_admin','admin','manager']);
+  static bool canReopenJob(String role)   => _any(role, ['super_admin','admin','manager']);
 
   // ── Customer permissions ────────────────────────────────────
-  static bool canViewCustomers(String role)   => _any(role, ['admin','manager','reception','technician']);
-  static bool canCreateCustomer(String role)  => _any(role, ['admin','manager','reception']);
-  static bool canEditCustomer(String role)    => _any(role, ['admin','manager','reception']);
-  static bool canDeleteCustomer(String role)  => _any(role, ['admin','manager']);
-  static bool canBlacklist(String role)       => _any(role, ['admin','manager']);
-  static bool canMarkVip(String role)         => _any(role, ['admin','manager']);
+  static bool canViewCustomers(String role)   => _any(role, ['super_admin','admin','manager','reception','technician']);
+  static bool canCreateCustomer(String role)  => _any(role, ['super_admin','admin','manager','reception']);
+  static bool canEditCustomer(String role)    => _any(role, ['super_admin','admin','manager','reception']);
+  static bool canDeleteCustomer(String role)  => _any(role, ['super_admin','admin','manager']);
+  static bool canBlacklist(String role)       => _any(role, ['super_admin','admin','manager']);
+  static bool canMarkVip(String role)         => _any(role, ['super_admin','admin','manager']);
 
   // ── Inventory permissions ───────────────────────────────────
-  static bool canViewInventory(String role)   => _any(role, ['admin','manager','technician']);
-  static bool canCreateProduct(String role)   => _any(role, ['admin','manager']);
-  static bool canEditProduct(String role)     => _any(role, ['admin','manager']);
-  static bool canDeleteProduct(String role)   => _any(role, ['admin']);
-  static bool canAdjustStock(String role)     => _any(role, ['admin','manager']);
+  static bool canViewInventory(String role)   => _any(role, ['super_admin','admin','manager','technician']);
+  static bool canCreateProduct(String role)   => _any(role, ['super_admin','admin','manager']);
+  static bool canEditProduct(String role)     => _any(role, ['super_admin','admin','manager']);
+  static bool canDeleteProduct(String role)   => _any(role, ['super_admin','admin']);
+  static bool canAdjustStock(String role)     => _any(role, ['super_admin','admin','manager']);
 
   // ── Invoice / Transaction permissions ──────────────────────
-  static bool canCreateInvoice(String role)   => _any(role, ['admin','manager','reception']);
-  static bool canViewInvoices(String role)    => _any(role, ['admin','manager','reception']);
-  static bool canProcessPayment(String role)  => _any(role, ['admin','manager','reception']);
-  static bool canRefund(String role)          => _any(role, ['admin','manager']);
-  static bool canViewTransactions(String role)=> _any(role, ['admin','manager']);
+  static bool canCreateInvoice(String role)   => _any(role, ['super_admin','admin','manager','reception']);
+  static bool canViewInvoices(String role)    => _any(role, ['super_admin','admin','manager','reception']);
+  static bool canProcessPayment(String role)  => _any(role, ['super_admin','admin','manager','reception']);
+  static bool canRefund(String role)          => _any(role, ['super_admin','admin','manager']);
+  static bool canViewTransactions(String role)=> _any(role, ['super_admin','admin','manager']);
 
   // ── Staff / User management ─────────────────────────────────
-  static bool canViewStaff(String role)       => _any(role, ['admin','manager']);
-  static bool canCreateStaff(String role)     => _any(role, ['admin']);
-  static bool canEditStaff(String role)       => _any(role, ['admin']);
-  static bool canDeactivateStaff(String role) => _any(role, ['admin']);
-  static bool canResetPin(String role)        => _any(role, ['admin']);
-  static bool canChangeRole(String role)      => _any(role, ['admin']);
+  static bool canViewStaff(String role)       => _any(role, ['super_admin','admin','manager']);
+  static bool canCreateStaff(String role)     => _any(role, ['super_admin','admin']);
+  static bool canEditStaff(String role)       => _any(role, ['super_admin','admin']);
+  static bool canDeactivateStaff(String role) => _any(role, ['super_admin','admin']);
+  static bool canResetPin(String role)        => _any(role, ['super_admin','admin']);
+  static bool canChangeRole(String role)      => _any(role, ['super_admin','admin']);
 
   // ── Shop settings ───────────────────────────────────────────
-  static bool canViewSettings(String role)    => _any(role, ['admin','manager']);
-  static bool canEditSettings(String role)    => _any(role, ['admin']);
-  static bool canViewBilling(String role)     => _any(role, ['admin']);
+  static bool canViewSettings(String role)    => _any(role, ['super_admin','admin','manager']);
+  static bool canEditSettings(String role)    => _any(role, ['super_admin','admin']);
+  static bool canViewBilling(String role)     => _any(role, ['super_admin','admin']);
 
   // ── Reports / Dashboard ─────────────────────────────────────
-  static bool canViewReports(String role)     => _any(role, ['admin','manager']);
+  static bool canViewReports(String role)     => _any(role, ['super_admin','admin','manager']);
   static bool canViewDashboard(String role)   => true; // all roles
 
   // ── Owner-only ───────────────────────────────────────────────
   static bool canTransferOwnership(String role, bool isOwner) => isOwner;
   static bool canSuspendShop(String role, bool isOwner)       => isOwner;
   static bool canDeleteShop(String role, bool isOwner)        => isOwner;
+  static bool canViewLedger(String role, bool isOwner)         => isOwner;
 
   // ── Helper ───────────────────────────────────────────────────
   static bool _any(String role, List<String> allowed) => allowed.contains(role);
@@ -370,6 +371,44 @@ class Job {
     invoiceId: data['invoiceId'] as String?,
     updatedAt: (data['updatedAt'] as String?) ?? '',
   );
+
+  Map<String, dynamic> toMap() => {
+    'jobId': jobId,
+    'jobNumber': jobNumber,
+    'shopId': shopId,
+    'customerId': customerId,
+    'customerName': customerName,
+    'customerPhone': customerPhone,
+    'brand': brand,
+    'model': model,
+    'imei': imei,
+    'color': color,
+    'problem': problem,
+    'notes': notes,
+    'status': status,
+    'previousStatus': previousStatus,
+    'holdReason': holdReason,
+    'priority': priority,
+    'technicianId': technicianId,
+    'technicianName': technicianName,
+    'createdAt': createdAt,
+    'estimatedEndDate': estimatedEndDate,
+    'laborCost': laborCost,
+    'partsCost': partsCost,
+    'discountAmount': discountAmount,
+    'taxAmount': taxAmount,
+    'totalAmount': totalAmount,
+    'partsUsed': partsUsed.map((p) => p.toMap()).toList(),
+    'intakePhotos': intakePhotos,
+    'completionPhotos': completionPhotos,
+    'timeline': timeline.map((t) => t.toMap()).toList(),
+    'notificationSent': notificationSent,
+    'notificationChannel': notificationChannel,
+    'reopenCount': reopenCount,
+    'warrantyExpiry': warrantyExpiry,
+    'invoiceId': invoiceId,
+    'updatedAt': updatedAt,
+  };
 }
 
 class PartUsed {
@@ -384,6 +423,12 @@ class PartUsed {
         productId: productId ?? this.productId, name: name ?? this.name,
         quantity: quantity ?? this.quantity, price: price ?? this.price,
       );
+  Map<String, dynamic> toMap() => {
+    'productId': productId,
+    'name': name,
+    'quantity': quantity,
+    'price': price,
+  };
 }
 
 class TimelineEntry {
@@ -396,6 +441,13 @@ class TimelineEntry {
     required this.status, required this.time, required this.by,
     this.note = '', this.type = 'flow',
   });
+  Map<String, dynamic> toMap() => {
+    'status': status,
+    'time': time,
+    'by': by,
+    'note': note,
+    'type': type,
+  };
 }
 
 // ── Customer ──────────────────────────────────────────────────────────────────
@@ -711,6 +763,64 @@ class SessionUser {
   bool get canManageStaff    => can(RoleAccess.canViewStaff);
   bool get canManageSettings => can(RoleAccess.canEditSettings);
   bool get canViewBilling    => isOwner && isActive;
+  bool get canViewLedger     => isOwner && isActive;
+}
+
+// ── Ledger Entry (Audit Log for Owners) ───────────────────────────────────────
+class LedgerEntry {
+  final String entryId;
+  final String shopId;
+  final String action; // "create", "edit", "delete"
+  final String entityType; // "transaction", "job", "customer", "product", etc.
+  final String entityId;
+  final Map<String, dynamic>? oldData; // Data before edit/delete
+  final Map<String, dynamic>? newData; // Data after create/edit
+  final String performedByUid;
+  final String performedByName;
+  final String timestamp;
+  final String? notes;
+
+  LedgerEntry({
+    required this.entryId,
+    required this.shopId,
+    required this.action,
+    required this.entityType,
+    required this.entityId,
+    this.oldData,
+    this.newData,
+    required this.performedByUid,
+    required this.performedByName,
+    required this.timestamp,
+    this.notes,
+  });
+
+  factory LedgerEntry.fromMap(Map<String, dynamic> data) => LedgerEntry(
+    entryId: (data['entryId'] as String?) ?? '',
+    shopId: (data['shopId'] as String?) ?? '',
+    action: (data['action'] as String?) ?? '',
+    entityType: (data['entityType'] as String?) ?? '',
+    entityId: (data['entityId'] as String?) ?? '',
+    oldData: data['oldData'] as Map<String, dynamic>?,
+    newData: data['newData'] as Map<String, dynamic>?,
+    performedByUid: (data['performedByUid'] as String?) ?? '',
+    performedByName: (data['performedByName'] as String?) ?? '',
+    timestamp: (data['timestamp'] as String?) ?? '',
+    notes: data['notes'] as String?,
+  );
+
+  Map<String, dynamic> toMap() => {
+    'entryId': entryId,
+    'shopId': shopId,
+    'action': action,
+    'entityType': entityType,
+    'entityId': entityId,
+    'oldData': oldData,
+    'newData': newData,
+    'performedByUid': performedByUid,
+    'performedByName': performedByName,
+    'timestamp': timestamp,
+    'notes': notes,
+  };
 }
 
 // ── Invoice ───────────────────────────────────────────────────────────────────

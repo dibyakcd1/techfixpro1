@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../data/providers.dart';
-import 'package:firebase_database/firebase_database.dart';
 import '../models/m.dart';
 import '../theme/t.dart';
 import '../widgets/w.dart';
 import 'repair_detail.dart';
 import 'add_repair.dart';
+import '../services/supabase_service.dart';
 
 class RepairsScreen extends ConsumerStatefulWidget {
   const RepairsScreen({super.key});
@@ -17,83 +17,28 @@ class RepairsScreen extends ConsumerStatefulWidget {
 }
 
 class _RepairsState extends ConsumerState<RepairsScreen> {
-  // Track which shopId we've synced so navigation back never re-syncs
-  String? _syncedShopId;
-  bool _syncing = false;
 
-  @override
-  void initState() {
-    super.initState();
-    // Delay to next frame so ref is ready
-    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeSync());
-  }
-
-  void _maybeSync() {
-    final session = ref.read(currentUserProvider).asData?.value;
-    final shopId = session?.shopId ?? '';
-    if (shopId.isNotEmpty && _syncedShopId != shopId && !_syncing) {
-      _syncing = true;
-      _syncJobsFromFirebase(shopId).whenComplete(() {
-        if (mounted) setState(() { _syncedShopId = shopId; _syncing = false; });
-      });
-    }
-  }
-
-  Future<void> _syncJobsFromFirebase(String shopId) async {
+  // Manual pull-to-refresh: re-fetches from Supabase and merges into provider.
+  // The real-time stream in RootShell handles all live updates automatically;
+  // this is only a fallback for connectivity edge cases.
+  Future<void> _manualRefresh() async {
+    final shopId = ref.read(shopIdProvider);
+    if (shopId.isEmpty) return;
     try {
-      final db = FirebaseDatabase.instance;
-      final snap = await db.ref('jobs')
-          .orderByChild('shopId')
-          .equalTo(shopId)
-          .get();
+      final response = await SupabaseService.instance.client
+          .from('jobs')
+          .select()
+          .eq('shopId', shopId);
       final list = <Job>[];
-      if (snap.exists && snap.children.isNotEmpty) {
-        for (final child in snap.children) {
-          final key = child.key;
-          final value = child.value;
-          if (key == null || value is! Map) continue;
-          final data = Map<String, dynamic>.from(value);
-          list.add(Job(
-            jobId: key,
-            jobNumber: (data['jobNumber'] as String?) ?? (data['num'] as String?) ?? '',
-            shopId: (data['shopId'] as String?) ?? shopId,
-            customerId: (data['customerId'] as String?) ?? '',
-            customerName: (data['customerName'] as String?) ?? '',
-            customerPhone: (data['customerPhone'] as String?) ?? '',
-            brand: (data['brand'] as String?) ?? '',
-            model: (data['model'] as String?) ?? '',
-            imei: (data['imei'] as String?) ?? '',
-            color: (data['color'] as String?) ?? '',
-            problem: (data['problem'] as String?) ?? '',
-            notes: (data['notes'] as String?) ?? '',
-            status: (data['status'] as String?) ?? 'Checked In',
-            previousStatus: data['previousStatus'] as String?,
-            holdReason: data['holdReason'] as String?,
-            priority: (data['priority'] as String?) ?? 'Normal',
-            technicianId: (data['technicianId'] as String?) ?? (data['techId'] as String?) ?? '',
-            technicianName: (data['technicianName'] as String?) ?? (data['techName'] as String?) ?? 'Unassigned',
-            laborCost: (data['laborCost'] as num?)?.toDouble() ?? 0,
-            partsCost: (data['partsCost'] as num?)?.toDouble() ?? 0,
-            discountAmount: (data['discountAmount'] as num?)?.toDouble() ?? (data['discount'] as num?)?.toDouble() ?? 0,
-            totalAmount: (data['totalAmount'] as num?)?.toDouble() ?? (data['total'] as num?)?.toDouble() ?? 0,
-            partsUsed: const [],
-            intakePhotos: const [],
-            completionPhotos: const [],
-            timeline: const [],
-            notificationSent: (data['notificationSent'] as bool?) ?? false,
-            reopenCount: (data['reopenCount'] as int?) ?? 0,
-            estimatedEndDate: (data['estimatedEndDate'] as String?) ?? '',
-            createdAt: (data['createdAt'] as String?) ?? DateTime.now().toIso8601String(),
-            updatedAt: (data['updatedAt'] as String?) ?? DateTime.now().toIso8601String(),
-          ));
-        }
+      for (final data in response) {
+        try { list.add(Job.fromMap(data)); } catch (_) {}
       }
-      // Merge with any optimistic jobs already in the provider (e.g. from addJob).
-      // This prevents the pattern: addJob() → pop() → rebuild → setAll() = duplicate.
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      // Merge: keep any optimistic jobs not yet confirmed by Supabase
       final existing = ref.read(jobsProvider);
       final merged = <String, Job>{};
-      for (final j in existing) { merged[j.jobId] = j; } // keep optimistic writes
-      for (final j in list)     { merged[j.jobId] = j; } // Firebase is source of truth
+      for (final j in existing) { merged[j.jobId] = j; }
+      for (final j in list)     { merged[j.jobId] = j; } // Supabase is source of truth
       ref.read(jobsProvider.notifier).setAll(merged.values.toList());
     } catch (_) {}
   }
@@ -105,7 +50,7 @@ class _RepairsState extends ConsumerState<RepairsScreen> {
     final tab = ref.watch(jobTabProvider);
     // Watch settings — screen must rebuild when tax type/rate changes
     ref.watch(settingsProvider);
-    // Watch auth state — triggers rebuild on login/logout; value read in _maybeSync
+    // Watch auth state — triggers rebuild on login/logout
     ref.watch(currentUserProvider);
 
     // Filter by tab
@@ -145,13 +90,6 @@ class _RepairsState extends ConsumerState<RepairsScreen> {
       'Done':    jobs.where((j) => j.isCompleted || j.isCancelled).length,
     };
 
-    assert(() {
-      debugPrint(
-        '[RepairsScreen] tab=$tab search="$search" total=${jobs.length} filtered=${filtered.length}',
-      );
-      return true;
-    }());
-
     return Scaffold(
       backgroundColor: C.bg,
       body: Column(
@@ -162,7 +100,7 @@ class _RepairsState extends ConsumerState<RepairsScreen> {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
             child: TextField(
               onChanged: (v) => ref.read(searchJobProvider.notifier).state = v,
-              style: GoogleFonts.syne(fontSize: 13, color: C.text),
+              style: GoogleFonts.inter(fontSize: 13, color: C.text),
               decoration: const InputDecoration(
                 hintText: '🔍  Search job number, customer, device...',
                 contentPadding: EdgeInsets.symmetric(vertical: 10, horizontal: 14),
@@ -198,7 +136,7 @@ class _RepairsState extends ConsumerState<RepairsScreen> {
                             width: sel ? 2 : 1),
                       ),
                       child: Row(children: [
-                        Text(e.key, style: GoogleFonts.syne(
+                        Text(e.key, style: GoogleFonts.inter(
                             fontSize: 12, fontWeight: FontWeight.w700,
                             color: sel ? tabColor : C.textMuted)),
                         const SizedBox(width: 5),
@@ -208,7 +146,7 @@ class _RepairsState extends ConsumerState<RepairsScreen> {
                             color: sel ? tabColor.withValues(alpha: 0.25) : C.bgCard,
                             borderRadius: BorderRadius.circular(99),
                           ),
-                          child: Text('${e.value}', style: GoogleFonts.syne(
+                          child: Text('${e.value}', style: GoogleFonts.plusJakartaSans(
                               fontSize: 10, fontWeight: FontWeight.w800,
                               color: sel ? tabColor : C.textMuted)),
                         ),
@@ -222,25 +160,39 @@ class _RepairsState extends ConsumerState<RepairsScreen> {
 
           // ── Job list ──────────────────────────────────────────
           Expanded(
-            child: filtered.isEmpty
-                ? Center(child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text('📋', style: TextStyle(fontSize: 48)),
-                      const SizedBox(height: 12),
-                      Text('No jobs found', style: GoogleFonts.syne(
-                          fontSize: 16, fontWeight: FontWeight.w700, color: C.textMuted)),
-                    ],
-                  ))
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
-                    itemCount: filtered.length,
-                    itemBuilder: (_, i) => _JobCard(
-                      job: filtered[i],
-                      onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) => RepairDetailScreen(jobId: filtered[i].jobId))),
+            child: RefreshIndicator(
+              color: C.primary,
+              onRefresh: _manualRefresh,
+              child: filtered.isEmpty
+                  ? ListView(
+                      children: [
+                        SizedBox(
+                          height: MediaQuery.of(context).size.height * 0.5,
+                          child: Center(child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Text('📋', style: TextStyle(fontSize: 48)),
+                              const SizedBox(height: 12),
+                              Text('No jobs found', style: GoogleFonts.inter(
+                                  fontSize: 16, fontWeight: FontWeight.w700, color: C.textMuted)),
+                              const SizedBox(height: 8),
+                              Text('Pull down to refresh', style: GoogleFonts.inter(
+                                  fontSize: 12, color: C.textDim)),
+                            ],
+                          )),
+                        ),
+                      ],
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+                      itemCount: filtered.length,
+                      itemBuilder: (_, i) => _JobCard(
+                        job: filtered[i],
+                        onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                            builder: (_) => RepairDetailScreen(jobId: filtered[i].jobId))),
+                      ),
                     ),
-                  ),
+            ),
           ),
         ],
       ),
@@ -251,7 +203,7 @@ class _RepairsState extends ConsumerState<RepairsScreen> {
         backgroundColor: C.primary,
         foregroundColor: C.bg,
         icon: const Icon(Icons.add),
-        label: Text('New Job', style: GoogleFonts.syne(fontWeight: FontWeight.w800)),
+        label: Text('New Job', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
       ),
     );
   }
@@ -267,13 +219,6 @@ class _JobCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final sc = C.statusColor(job.status);
     final isSpecial = job.isOnHold || job.isCancelled;
-
-    assert(() {
-      debugPrint(
-        '[_JobCard] job=${job.jobId} status=${job.status} overdue=${job.isOverdue} hold=${job.isOnHold}',
-      );
-      return true;
-    }());
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -310,7 +255,7 @@ class _JobCard extends StatelessWidget {
                     children: [
                 // Row 1: Job num + badges + status
                 Row(children: [
-                  Text(job.jobNumber, style: GoogleFonts.syne(
+                  Text(job.jobNumber, style: GoogleFonts.plusJakartaSans(
                       fontWeight: FontWeight.w800, fontSize: 13, color: C.white)),
                   const SizedBox(width: 8),
                   if (job.priority != 'Normal')
@@ -330,7 +275,7 @@ class _JobCard extends StatelessWidget {
 
                 // Row 2: Device
                 Text('${job.brand} ${job.model}',
-                    style: GoogleFonts.syne(
+                    style: GoogleFonts.inter(
                         fontWeight: FontWeight.w700, fontSize: 15, color: C.white)),
                 const SizedBox(height: 2),
 
@@ -339,11 +284,11 @@ class _JobCard extends StatelessWidget {
                   const Icon(Icons.person_outline, size: 13, color: C.textMuted),
                   const SizedBox(width: 4),
                   Text(job.customerName,
-                      style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+                      style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
                 ]),
                 const SizedBox(height: 4),
                 Text(job.problem,
-                    style: GoogleFonts.syne(fontSize: 12, color: C.text),
+                    style: GoogleFonts.inter(fontSize: 12, color: C.text),
                     maxLines: 1, overflow: TextOverflow.ellipsis),
 
                 // Hold/Cancel reason banner
@@ -359,7 +304,7 @@ class _JobCard extends StatelessWidget {
                     ),
                     child: Text(
                       '${C.statusIcon(job.status)}  ${job.holdReason}',
-                      style: GoogleFonts.syne(fontSize: 11, color: sc),
+                      style: GoogleFonts.inter(fontSize: 11, color: sc),
                       maxLines: 1, overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -380,7 +325,7 @@ class _JobCard extends StatelessWidget {
                       children: [
                         const Icon(Icons.verified_user, size: 12, color: C.green),
                         const SizedBox(width: 4),
-                        Text('UNDER WARRANTY', style: GoogleFonts.syne(fontSize: 10, fontWeight: FontWeight.w800, color: C.green)),
+                        Text('UNDER WARRANTY', style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.w800, color: C.green)),
                       ],
                     ),
                   ),
@@ -393,7 +338,7 @@ class _JobCard extends StatelessWidget {
                   if (job.technicianName.isNotEmpty && job.technicianName != 'Unassigned') ...[
                     const Icon(Icons.engineering_outlined, size: 13, color: C.textMuted),
                     const SizedBox(width: 4),
-                    Text(job.technicianName, style: GoogleFonts.syne(
+                    Text(job.technicianName, style: GoogleFonts.inter(
                         fontSize: 11, color: C.textMuted)),
                     const Spacer(),
                   ] else const Spacer(),
@@ -402,7 +347,7 @@ class _JobCard extends StatelessWidget {
                         padding: EdgeInsets.only(right: 8),
                         child: Icon(Icons.notifications_active,
                             size: 14, color: C.green)),
-                  Text(fmtMoney(job.totalAmount), style: GoogleFonts.syne(
+                  Text(fmtMoney(job.totalAmount), style: GoogleFonts.plusJakartaSans(
                       fontWeight: FontWeight.w800, fontSize: 15, color: C.primary)),
                   const Icon(Icons.chevron_right, size: 18, color: C.textDim),
                 ]),

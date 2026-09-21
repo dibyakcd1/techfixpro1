@@ -1,11 +1,19 @@
+// ─────────────────────────────────────────────────────────────────────────────
+//  main.dart
+//
+//  FIX: Added onAuthStateChange listener to _AuthGate.
+//  When a new user clicks their verification email and the app opens,
+//  AuthChangeEvent.signedIn fires with a real session.
+//  PendingOnboardingService.run() then seeds registrations/shops/users
+//  with an authenticated token — no more 401.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'theme/t.dart';
 import 'data/providers.dart';
 import 'widgets/w.dart';
@@ -18,66 +26,172 @@ import 'screens/pos.dart';
 import 'screens/reports.dart';
 import 'screens/settings.dart';
 import 'screens/repair_detail.dart';
-import 'screens/auth_login.dart';
 import 'screens/staff_lock_screen.dart';
+import 'screens/auth_signup.dart';      // ← for PendingOnboardingService
+import 'screens/auth_login.dart';       // ← redirect after seeding
 import 'data/active_session.dart';
+import 'services/supabase_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
-    if (kIsWeb) {
-      await Firebase.initializeApp(
-        options: const FirebaseOptions(
-          apiKey: 'AIzaSyDe-XjqOon900QGyA81CsgCgsz0_41i5pQ',
-          authDomain: 'techfixv1.firebaseapp.com',
-          databaseURL: 'https://techfixv1-default-rtdb.firebaseio.com',
-          projectId: 'techfixv1',
-          storageBucket: 'techfixv1.firebasestorage.app',
-          messagingSenderId: '709235793243',
-          appId: '1:709235793243:web:0d6ed7c436e01a2dec8e7e',
-        ),
-      );
-    } else {
-      await Firebase.initializeApp();
-    }
-    if (!kIsWeb) {
-      FirebaseDatabase.instance.setPersistenceEnabled(true);
-    }
+    await SupabaseService().initialize();
   } catch (e) {
-    debugPrint('Firebase initialization failed: $e');
+    debugPrint('Supabase initialization failed: $e');
   }
   runApp(const ProviderScope(child: TechFixApp()));
 }
 
-class TechFixApp extends StatelessWidget {
+class TechFixApp extends ConsumerWidget {
   const TechFixApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final settings = ref.watch(settingsProvider);
     return MaterialApp(
       title: 'TechFix Pro',
       debugShowCheckedModeBanner: false,
-      theme: buildTheme(),
+      theme: buildTheme(false),  // Light theme
+      darkTheme: buildTheme(true), // Dark theme
+      themeMode: settings.darkMode ? ThemeMode.dark : ThemeMode.light,
       home: const _AuthGate(),
     );
   }
 }
 
-class _AuthGate extends ConsumerWidget {
+// ─────────────────────────────────────────────────────────────────────────────
+//  _AuthGate
+//  Listens to Supabase auth state changes.
+//  On signedIn: runs pending onboarding (if any) then navigates.
+//  On signedOut: nothing — your app uses the PIN activeSession for nav.
+//
+//  FIX: ownerUid and ownerShopId are now loaded from SharedPreferences so
+//  StaffLockScreen receives real values instead of empty strings. Previously
+//  the lock screen could never bootstrap staff or the owner sheet correctly.
+// ─────────────────────────────────────────────────────────────────────────────
+class _AuthGate extends ConsumerStatefulWidget {
   const _AuthGate();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends ConsumerState<_AuthGate> {
+  StreamSubscription<AuthState>? _authSub;
+  bool _seedingInProgress = false;
+  // FIX: store owner identity so StaffLockScreen can bootstrap correctly
+  String _ownerUid    = '';
+  String _ownerShopId = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _authSub = SupabaseService().client.auth.onAuthStateChange.listen(_onAuthState);
+    // Load persisted owner identity on cold start
+    _loadOwnerIdentity();
+  }
+
+  Future<void> _loadOwnerIdentity() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      var uid    = prefs.getString('ownerUid') ?? '';
+      var shopId = prefs.getString('shopId') ?? '';
+      debugPrint('DEBUG _AuthGate _loadOwnerIdentity: from prefs ownerUid="$uid", ownerShopId="$shopId"');
+      
+      // If prefs are empty but there's an active Supabase session, query users table!
+      if ((uid.isEmpty || shopId.isEmpty)) {
+        final currentUser = SupabaseService.instance.client.auth.currentUser;
+        if (currentUser != null) {
+          debugPrint('DEBUG _AuthGate _loadOwnerIdentity: active Supabase user found, querying users table...');
+          final response = await SupabaseService.instance.client
+              .from('users')
+              .select('uid, shopId, isOwner')
+              .eq('uid', currentUser.id)
+              .maybeSingle();
+          debugPrint('DEBUG _AuthGate _loadOwnerIdentity: users response=$response');
+          if (response != null) {
+            uid = response['uid'] as String? ?? '';
+            shopId = response['shopId'] as String? ?? '';
+            // Also, store it back to prefs!
+            if (uid.isNotEmpty && shopId.isNotEmpty) {
+              await prefs.setString('ownerUid', uid);
+              await prefs.setString('shopId', shopId);
+              debugPrint('DEBUG _AuthGate _loadOwnerIdentity: stored to prefs ownerUid="$uid", ownerShopId="$shopId"');
+            }
+          }
+        }
+      }
+
+      if (mounted && (uid != _ownerUid || shopId != _ownerShopId)) {
+        setState(() {
+          _ownerUid    = uid;
+          _ownerShopId = shopId;
+        });
+      }
+    } catch (e) {
+      debugPrint('DEBUG _AuthGate _loadOwnerIdentity error: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _onAuthState(AuthState event) async {
+    if (event.event != AuthChangeEvent.signedIn) return;
+    final user = event.session?.user;
+    if (user == null) return;
+
+    // Refresh owner identity whenever Supabase fires a sign-in
+    await _loadOwnerIdentity();
+
+    final hasPending = await PendingOnboardingService.hasPending();
+    if (!hasPending) return;
+
+    if (_seedingInProgress) return;
+    _seedingInProgress = true;
+
+    try {
+      debugPrint('🌱 Seeding shop data for new owner ${user.id}...');
+      await PendingOnboardingService.run(user.id, ref);
+      debugPrint('✅ Shop data seeded successfully');
+
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+          (_) => false,
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ Seeding failed: $e');
+    } finally {
+      _seedingInProgress = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final activeSession = ref.watch(activeSessionProvider);
 
-    // ── StaffLockScreen is ALWAYS the first screen ─────────────────────────
-    // It shows:  role cards + PIN entry for staff
-    //            Firebase status dot (red/green) so users know if DB is live
-    //            Hidden 5-tap T logo → admin sheet (login/logout Firebase)
-    //
-    // Once a session is set (staff PIN or admin "Enter App"), RootShell loads.
+    // FIX: keep owner identity in sync with activeSession when available
+    if (activeSession != null) {
+      if (activeSession.uid.isNotEmpty && activeSession.uid != _ownerUid) {
+        _ownerUid = activeSession.uid;
+      }
+      if (activeSession.shopId.isNotEmpty && activeSession.shopId != _ownerShopId) {
+        _ownerShopId = activeSession.shopId;
+      }
+    }
+
     if (activeSession == null) {
-      return const StaffLockScreen(ownerUid: '', ownerShopId: '');
+      // FIX: pass real ownerUid and ownerShopId so StaffLockScreen can
+      // load staff and the owner access sheet works correctly.
+      return StaffLockScreen(
+        ownerUid:    _ownerUid,
+        ownerShopId: _ownerShopId,
+      );
     }
     return const RootShell();
   }
@@ -113,72 +227,62 @@ class _RootShellState extends ConsumerState<RootShell> {
   }
 
   static const _navItems = [
-    _NavItem(index: 0, icon: Icons.home_outlined,        activeIcon: Icons.home,            label: 'Home'),
-    _NavItem(index: 1, icon: Icons.build_outlined,       activeIcon: Icons.build,           label: 'Repairs'),
-    _NavItem(index: 2, icon: Icons.people_outline,       activeIcon: Icons.people,          label: 'Customers'),
-    _NavItem(index: 4, icon: Icons.point_of_sale_outlined,activeIcon: Icons.point_of_sale, label: 'POS'),
-    _NavItem(index: -1, icon: Icons.menu,                activeIcon: Icons.menu_open,       label: 'More'),
+    _NavItem(index: 0, icon: Icons.home_outlined,         activeIcon: Icons.home,            label: 'Home'),
+    _NavItem(index: 1, icon: Icons.build_outlined,        activeIcon: Icons.build,           label: 'Repairs'),
+    _NavItem(index: 2, icon: Icons.people_outline,        activeIcon: Icons.people,          label: 'Customers'),
+    _NavItem(index: 4, icon: Icons.point_of_sale_outlined, activeIcon: Icons.point_of_sale,  label: 'POS'),
+    _NavItem(index: -1, icon: Icons.menu,                 activeIcon: Icons.menu_open,       label: 'More'),
   ];
 
   Future<void> _initAppData(String shopId) async {
     if (_initialized) return;
     try {
-      final db = FirebaseDatabase.instance;
-      
+      final supabase = SupabaseService().client;
+
       // Real-time settings listener
-      db.ref('shops/$shopId').onValue.listen((event) {
-        if (event.snapshot.exists) {
-          final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+      supabase.from('shops').stream(primaryKey: ['shopId']).eq('shopId', shopId).listen((event) {
+        if (event.isNotEmpty) {
+          final data = event.first;
           ref.read(settingsProvider.notifier).update(
             ref.read(settingsProvider).copyWith(
               shopId: shopId,
-              shopName: (data['shopName'] as String?) ?? (data['name'] as String?) ?? 'TechFix Pro',
-              ownerName: (data['ownerName'] as String?) ?? (data['owner'] as String?) ?? 'Admin',
-              email: (data['email'] as String?) ?? '',
-              phone: (data['phone'] as String?) ?? '',
-              address: (data['address'] as String?) ?? '',
-              gstNumber: (data['gstNumber'] as String?) ?? '',
-              invoicePrefix: (data['invoicePrefix'] as String?) ?? 'INV',
+              shopName: data['shopName'] as String? ?? data['name'] as String? ?? 'TechFix Pro',
+              ownerName: data['ownerName'] as String? ?? data['owner'] as String? ?? 'Admin',
+              email: data['email'] as String? ?? '',
+              phone: data['phone'] as String? ?? '',
+              address: data['address'] as String? ?? '',
+              gstNumber: data['gstNumber'] as String? ?? '',
+              invoicePrefix: data['invoicePrefix'] as String? ?? 'INV',
               defaultTaxRate: (data['defaultTaxRate'] as num?)?.toDouble() ?? 18.0,
-              darkMode: (data['darkMode'] as bool?) ?? true,
-              requireIntakePhoto: (data['requireIntakePhoto'] as bool?) ?? false,
-              requireCompletionPhoto: (data['requireCompletionPhoto'] as bool?) ?? false,
-            )
+              darkMode: data['darkMode'] as bool? ?? true,
+              requireIntakePhoto: data['requireIntakePhoto'] as bool? ?? false,
+              requireCompletionPhoto: data['requireCompletionPhoto'] as bool? ?? false,
+            ),
           );
         }
       });
-      
-      // Real-time staff listener — feeds techsProvider (ALL roles).
-      // TechniciansPage (settings) shows ALL staff regardless of role.
-      // Job-assignment dropdown uses activeTechsProvider which filters
-      // to technician+manager only — see providers.dart activeTechsProvider.
-      db.ref('users')
-          .orderByChild('shopId')
-          .equalTo(shopId)
-          .onValue.listen((event) {
+
+      // Real-time staff listener
+      supabase.from('users').stream(primaryKey: ['uid']).eq('shopId', shopId).listen((event) {
         final techs = <Technician>[];
-        if (event.snapshot.exists) {
-          for (final child in event.snapshot.children) {
-            final data = Map<String, dynamic>.from(child.value as Map);
-            final isOwner = (data['isOwner'] as bool?) ?? false;
-            if (isOwner) continue; // owner managed separately
-            techs.add(Technician(
-              techId: child.key!,
-              shopId: shopId,
-              name: (data['displayName'] as String?) ?? (data['name'] as String?) ?? '',
-              phone: (data['phone'] as String?) ?? '',
-              specialization: (data['specialization'] as String?) ?? 'General',
-              isActive: (data['isActive'] as bool?) ?? true,
-              totalJobs: (data['totalJobs'] as int?) ?? (data['jobs'] as int?) ?? 0,
-              rating: (data['rating'] as num?)?.toDouble() ?? 5.0,
-              pin: (data['pin'] as String?) ?? '',
-              joinedAt: (data['createdAt'] as String?) ?? (data['joinedAt'] as String?) ?? DateTime.now().toIso8601String(),
-              role: (data['role'] as String?) ?? 'technician',
-            ));
-          }
+        for (final data in event) {
+          final isOwner = (data['isOwner'] as bool?) ?? false;
+          if (isOwner) continue;
+          techs.add(Technician(
+            techId: data['uid'] as String,
+            shopId: shopId,
+            name: (data['displayName'] as String?) ?? (data['name'] as String?) ?? '',
+            phone: (data['phone'] as String?) ?? '',
+            specialization: (data['specialization'] as String?) ?? 'General',
+            isActive: (data['isActive'] as bool?) ?? true,
+            totalJobs: (data['totalJobs'] as int?) ?? (data['jobs'] as int?) ?? 0,
+            rating: (data['rating'] as num?)?.toDouble() ?? 5.0,
+            pin: (data['pin'] as String?) ?? '',
+            joinedAt: (data['createdAt'] as String?) ?? (data['joinedAt'] as String?) ?? DateTime.now().toIso8601String(),
+            role: (data['role'] as String?) ?? 'technician',
+          ));
         }
         techs.sort((a, b) => a.name.compareTo(b.name));
-        // Update staffProvider — techsProvider derives automatically
         final staff = techs.map((t) => StaffMember(
           uid: t.techId,
           shopId: t.shopId,
@@ -202,64 +306,46 @@ class _RootShellState extends ConsumerState<RootShell> {
       });
 
       // Real-time products listener
-      db.ref('products')
-          .orderByChild('shopId')
-          .equalTo(shopId)
-          .onValue.listen((event) {
+      supabase.from('products').stream(primaryKey: ['productId']).eq('shopId', shopId).listen((event) {
         final products = <Product>[];
-        if (event.snapshot.exists) {
-          for (final child in event.snapshot.children) {
-            final data = Map<String, dynamic>.from(child.value as Map);
-            products.add(Product(
-              productId: child.key!,
-              shopId: shopId,
-              sku: (data['sku'] as String?) ?? '',
-              productName: (data['productName'] as String?) ?? (data['name'] as String?) ?? '',
-              category: (data['category'] as String?) ?? (data['cat'] as String?) ?? 'Accessories',
-              brand: (data['brand'] as String?) ?? '',
-              description: (data['description'] as String?) ?? '',
-              supplierName: (data['supplierName'] as String?) ?? (data['supplier'] as String?) ?? '',
-              costPrice: (data['costPrice'] as num?)?.toDouble() ?? (data['cost'] as num?)?.toDouble() ?? 0,
-              sellingPrice: (data['sellingPrice'] as num?)?.toDouble() ?? (data['price'] as num?)?.toDouble() ?? 0,
-              stockQty: (data['stockQty'] as int?) ?? (data['qty'] as int?) ?? 0,
-              reorderLevel: (data['reorderLevel'] as int?) ?? (data['reorder'] as int?) ?? 5,
-              isActive: (data['isActive'] as bool?) ?? true,
-              imageUrl: (data['imageUrl'] as String?) ?? '',
-              createdAt: (data['createdAt'] as String?) ?? '',
-              updatedAt: (data['updatedAt'] as String?) ?? '',
-            ));
-          }
+        for (final data in event) {
+          products.add(Product(
+            productId: data['productId'] as String,
+            shopId: shopId,
+            sku: (data['sku'] as String?) ?? '',
+            productName: (data['productName'] as String?) ?? (data['name'] as String?) ?? '',
+            category: (data['category'] as String?) ?? 'Accessories',
+            brand: (data['brand'] as String?) ?? '',
+            description: (data['description'] as String?) ?? '',
+            supplierName: (data['supplierName'] as String?) ?? (data['supplier'] as String?) ?? '',
+            costPrice: (data['costPrice'] as num?)?.toDouble() ?? 0,
+            sellingPrice: (data['sellingPrice'] as num?)?.toDouble() ?? 0,
+            stockQty: (data['stockQty'] as int?) ?? 0,
+            reorderLevel: (data['reorderLevel'] as int?) ?? 5,
+            isActive: (data['isActive'] as bool?) ?? true,
+            imageUrl: (data['imageUrl'] as String?) ?? '',
+            createdAt: (data['createdAt'] as String?) ?? '',
+            updatedAt: (data['updatedAt'] as String?) ?? '',
+          ));
         }
         ref.read(productsProvider.notifier).setAll(products);
       });
 
       // Real-time jobs listener
-      db.ref('jobs')
-          .orderByChild('shopId')
-          .equalTo(shopId)
-          .onValue.listen((event) {
+      supabase.from('jobs').stream(primaryKey: ['jobId']).eq('shopId', shopId).listen((event) {
         final jobs = <Job>[];
-        if (event.snapshot.exists) {
-          for (final child in event.snapshot.children) {
-            final data = Map<String, dynamic>.from(child.value as Map);
-            jobs.add(Job.fromMap(data));
-          }
-          jobs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        for (final data in event) {
+          jobs.add(Job.fromMap(data));
         }
+        jobs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
         ref.read(jobsProvider.notifier).setAll(jobs);
       });
 
       // Real-time customers listener
-      db.ref('customers')
-          .orderByChild('shopId')
-          .equalTo(shopId)
-          .onValue.listen((event) {
+      supabase.from('customers').stream(primaryKey: ['customerId']).eq('shopId', shopId).listen((event) {
         final customers = <Customer>[];
-        if (event.snapshot.exists) {
-          for (final child in event.snapshot.children) {
-            final data = Map<String, dynamic>.from(child.value as Map);
-            customers.add(Customer.fromMap(data));
-          }
+        for (final data in event) {
+          customers.add(Customer.fromMap(data));
         }
         ref.read(customersProvider.notifier).setAll(customers);
       });
@@ -272,40 +358,41 @@ class _RootShellState extends ConsumerState<RootShell> {
 
   @override
   Widget build(BuildContext context) {
+    final appTheme     = ref.watch(appThemeProvider);
     final userAsync    = ref.watch(currentUserProvider);
     final session      = userAsync.asData?.value;
+    // FIX: watch activeSessionProvider so data loads on staff PIN login too.
+    // Previously only currentUserProvider was checked, but staff PIN login
+    // does not change Supabase auth — only activeSessionProvider.
     final activeSession = ref.watch(activeSessionProvider);
 
-    // Kick off DB streams once (idempotent)
     if (!_initialized) {
-      if (session != null && session.shopId.isNotEmpty) {
-        _initAppData(session.shopId);
-      } else if (_cachedShopId != null && _cachedShopId!.isNotEmpty) {
-        _initAppData(_cachedShopId!);
+      // Priority: activeSession (PIN login) > Supabase session > cached prefs
+      final shopId = activeSession?.shopId.isNotEmpty == true
+          ? activeSession!.shopId
+          : session?.shopId.isNotEmpty == true
+              ? session!.shopId
+              : (_cachedShopId ?? '');
+      if (shopId.isNotEmpty) {
+        _initAppData(shopId);
       }
     }
 
-    // activeSession may be null (no role chosen yet) — that's fine,
-    // the app still loads. Role is only needed for permission-gated features.
-
-    final jobs = ref.watch(jobsProvider);
-    final overdue = jobs.where((j) => j.isOverdue).length;
-    final ready   = jobs.where((j) => j.status == 'Ready for Pickup').length;
-    final onHold  = jobs.where((j) => j.isOnHold).length;
+    final jobs     = ref.watch(jobsProvider);
+    final overdue  = jobs.where((j) => j.isOverdue).length;
+    final ready    = jobs.where((j) => j.status == 'Ready for Pickup').length;
+    final onHold   = jobs.where((j) => j.isOnHold).length;
     final settings = ref.watch(settingsProvider);
-     final cart = ref.watch(cartProvider);
+    final cart     = ref.watch(cartProvider);
     final cartCount = cart.fold<int>(0, (s, c) => s + c.qty);
 
-    // Build screens – use callbacks so DashScreen can switch tabs
     final screens = <Widget>[
       DashScreen(
         onRepairs: () => setState(() => _idx = 1),
         onInventory: () => setState(() => _idx = 3),
         onOpenJob: (jobId) {
           Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => RepairDetailScreen(jobId: jobId),
-            ),
+            MaterialPageRoute(builder: (_) => RepairDetailScreen(jobId: jobId)),
           );
         },
       ),
@@ -317,15 +404,10 @@ class _RootShellState extends ConsumerState<RootShell> {
       const SettingsScreen(),
     ];
 
-    final shopName = settings.shopName.isEmpty ? 'TechFix Pro' : settings.shopName;
+    final shopName   = settings.shopName.isEmpty ? 'TechFix Pro' : settings.shopName;
     final appBarTitle = switch (_idx) {
-      0 => shopName,
-      1 => 'Repairs',
-      2 => 'Customers',
-      3 => 'Inventory',
-      4 => 'POS',
-      5 => 'Reports',
-      6 => 'Settings',
+      0 => shopName, 1 => 'Repairs', 2 => 'Customers',
+      3 => 'Inventory', 4 => 'POS', 5 => 'Reports', 6 => 'Settings',
       _ => shopName,
     };
 
@@ -343,39 +425,31 @@ class _RootShellState extends ConsumerState<RootShell> {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Center(
-              child: Text('T', style: GoogleFonts.syne(
+              child: Text('T', style: GoogleFonts.plusJakartaSans(
                   fontWeight: FontWeight.w900, fontSize: 18, color: C.bg)),
             ),
           ),
           const SizedBox(width: 10),
           Flexible(
-            child: Text(
-              appBarTitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.syne(
-                fontWeight: FontWeight.w800,
-                fontSize: 18,
-              ),
-            ),
+            child: Text(appBarTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 18)),
           ),
         ]),
         actions: [
-          // Overdue badge
           if (overdue > 0)
             _AppBarBadge(icon: '⏰', count: overdue, color: C.red,
                 onTap: () {
                   setState(() => _idx = 1);
                   ref.read(jobTabProvider.notifier).state = 'Active';
                 }),
-          // On Hold badge
           if (onHold > 0)
             _AppBarBadge(icon: '⏸️', count: onHold, color: C.yellow,
                 onTap: () {
                   setState(() => _idx = 1);
                   ref.read(jobTabProvider.notifier).state = 'On Hold';
                 }),
-          // Ready for pickup badge
           if (ready > 0)
             _AppBarBadge(icon: '✅', count: ready, color: C.green,
                 onTap: () {
@@ -383,10 +457,7 @@ class _RootShellState extends ConsumerState<RootShell> {
                   ref.read(jobTabProvider.notifier).state = 'Ready';
                 }),
           if (_idx == 4)
-            _CartAction(
-              count: cartCount,
-              onTap: () => _openCart(cart),
-            ),
+            _CartAction(count: cartCount, onTap: () => _openCart(cart)),
           const SizedBox(width: 8),
         ],
       ),
@@ -429,10 +500,9 @@ class _RootShellState extends ConsumerState<RootShell> {
                   ),
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
                     Icon(sel ? item.activeIcon : item.icon,
-                        color: sel ? C.primary : C.textDim,
-                        size: 22),
+                        color: sel ? C.primary : C.textDim, size: 22),
                     const SizedBox(height: 3),
-                    Text(item.label, style: GoogleFonts.syne(
+                    Text(item.label, style: GoogleFonts.plusJakartaSans(
                         fontSize: 9,
                         fontWeight: sel ? FontWeight.w800 : FontWeight.w500,
                         color: sel ? C.primary : C.textDim,
@@ -446,44 +516,40 @@ class _RootShellState extends ConsumerState<RootShell> {
       ),
     );
   }
-  
+
   void _openMoreSheet() {
-    final activeSession = ref.read(activeSessionProvider);
+    // Get theme colors here (before builder context)
+    final theme = ref.read(appThemeProvider);
+
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: C.bgElevated,
+      backgroundColor: theme.bgElevated,
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.inventory_2_outlined, color: C.text),
-              title: const Text('Stock'),
+              leading: Icon(Icons.inventory_2_outlined, color: theme.text),
+              title: Text('Stock', style: TextStyle(color: theme.text)),
               onTap: () { setState(() => _idx = 3); Navigator.of(ctx).pop(); },
             ),
             ListTile(
-              leading: const Icon(Icons.bar_chart_outlined, color: C.text),
-              title: const Text('Reports'),
+              leading: Icon(Icons.bar_chart_outlined, color: theme.text),
+              title: Text('Reports', style: TextStyle(color: theme.text)),
               onTap: () { setState(() => _idx = 5); Navigator.of(ctx).pop(); },
             ),
             ListTile(
-              leading: const Icon(Icons.settings_outlined, color: C.text),
-              title: const Text('Settings'),
+              leading: Icon(Icons.settings_outlined, color: theme.text),
+              title: Text('Settings', style: TextStyle(color: theme.text)),
               onTap: () { setState(() => _idx = 6); Navigator.of(ctx).pop(); },
             ),
-            const Divider(color: C.border, height: 1),
-            // Role logout is in Settings → Sign Out (logs out of role only).
-            // Firebase sign out is in the hidden admin screen (5-tap logo).
+            Divider(color: theme.border, height: 1),
             ListTile(
-              leading: const Icon(Icons.settings_outlined, color: C.textMuted),
-              title: Text('Sign out of role',
-                  style: GoogleFonts.syne(color: C.textMuted)),
+              leading: Icon(Icons.settings_outlined, color: theme.textMuted),
+              title: Text('Sign out of role', style: GoogleFonts.inter(color: theme.textMuted)),
               subtitle: Text('Go to Settings → Sign Out',
-                  style: GoogleFonts.syne(fontSize: 11, color: C.textDim)),
-              onTap: () {
-                Navigator.of(ctx).pop();
-                setState(() => _idx = 6); // open Settings
-              },
+                  style: GoogleFonts.inter(fontSize: 11, color: theme.textDim)),
+              onTap: () { Navigator.of(ctx).pop(); setState(() => _idx = 6); },
             ),
           ],
         ),
@@ -499,12 +565,11 @@ class _RootShellState extends ConsumerState<RootShell> {
   void _openCart(List<CartItem> cart) {
     final width = MediaQuery.of(context).size.width;
     if (cart.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Cart is empty', style: GoogleFonts.syne(fontWeight: FontWeight.w700)),
-          backgroundColor: C.bgElevated,
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Cart is empty',
+            style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        backgroundColor: C.bgElevated,
+      ));
       return;
     }
     if (width < 700) {
@@ -525,10 +590,10 @@ class _NavItem {
   final IconData icon;
   final IconData activeIcon;
   final String label;
-  const _NavItem({required this.index, required this.icon, required this.activeIcon, required this.label});
+  const _NavItem({required this.index, required this.icon,
+      required this.activeIcon, required this.label});
 }
 
-// ── App bar badge widget ───────────────────────────────────────
 class _AppBarBadge extends StatelessWidget {
   final String icon;
   final int count;
@@ -551,7 +616,7 @@ class _AppBarBadge extends StatelessWidget {
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Text(icon, style: const TextStyle(fontSize: 13)),
         const SizedBox(width: 4),
-        Text('$count', style: GoogleFonts.syne(
+        Text('$count', style: GoogleFonts.plusJakartaSans(
             fontSize: 11, fontWeight: FontWeight.w800, color: color)),
       ]),
     ),
@@ -577,24 +642,16 @@ class _CartAction extends StatelessWidget {
             const Icon(Icons.shopping_cart_outlined, color: C.textDim),
             if (hasItems)
               Positioned(
-                right: -2,
-                top: -2,
+                right: -2, top: -2,
                 child: Container(
                   padding: const EdgeInsets.all(3),
                   decoration: BoxDecoration(
-                    color: C.primary,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
+                      color: C.primary, borderRadius: BorderRadius.circular(99)),
                   constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
                   child: Center(
-                    child: Text(
-                      count > 99 ? '99+' : '$count',
-                      style: GoogleFonts.syne(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                        color: C.bg,
-                      ),
-                    ),
+                    child: Text(count > 99 ? '99+' : '$count',
+                        style: GoogleFonts.plusJakartaSans(
+                            fontSize: 9, fontWeight: FontWeight.w800, color: C.bg)),
                   ),
                 ),
               ),
@@ -611,7 +668,7 @@ class _CartDrawer extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cart = ref.watch(cartProvider);
+    final cart  = ref.watch(cartProvider);
     final total = cart.fold<double>(0, (s, c) => s + c.product.sellingPrice * c.qty);
     return Drawer(
       backgroundColor: C.bgElevated,
@@ -628,23 +685,19 @@ class _CartDrawer extends ConsumerWidget {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('Cart', style: GoogleFonts.syne(fontSize: 18, fontWeight: FontWeight.w800, color: C.white)),
+                      Text('Cart', style: GoogleFonts.plusJakartaSans(
+                          fontSize: 18, fontWeight: FontWeight.w800, color: C.white)),
                       IconButton(
-                        icon: const Icon(Icons.close, color: C.textDim),
-                        onPressed: () => Navigator.of(context).maybePop(),
-                      ),
+                          icon: const Icon(Icons.close, color: C.textDim),
+                          onPressed: () => Navigator.of(context).maybePop()),
                     ],
                   ),
                   const SizedBox(height: 12),
                   if (cart.isEmpty)
-                    Expanded(
-                      child: Center(
-                        child: Text(
-                          'Your cart is empty',
-                          style: GoogleFonts.syne(fontSize: 13, color: C.textMuted),
-                        ),
-                      ),
-                    )
+                    Expanded(child: Center(
+                      child: Text('Your cart is empty',
+                          style: GoogleFonts.inter(fontSize: 13, color: C.textMuted)),
+                    ))
                   else
                     Expanded(
                       child: ListView.separated(
@@ -659,77 +712,53 @@ class _CartDrawer extends ConsumerWidget {
                               borderRadius: BorderRadius.circular(10),
                               border: Border.all(color: C.border),
                             ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        item.product.productName,
-                                        style: GoogleFonts.syne(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          color: C.text,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        '${fmtMoney(item.product.sellingPrice)} each',
-                                        style: GoogleFonts.syne(fontSize: 11, color: C.textMuted),
-                                      ),
-                                    ],
-                                  ),
+                            child: Row(children: [
+                              Expanded(child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(item.product.productName,
+                                      style: GoogleFonts.inter(fontSize: 13,
+                                          fontWeight: FontWeight.w600, color: C.text),
+                                      overflow: TextOverflow.ellipsis),
+                                  const SizedBox(height: 2),
+                                  Text('${fmtMoney(item.product.sellingPrice)} each',
+                                      style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
+                                ],
+                              )),
+                              const SizedBox(width: 8),
+                              Row(children: [
+                                IconButton(
+                                  onPressed: () => ref.read(cartProvider.notifier)
+                                      .setQty(item.product.productId, item.qty - 1),
+                                  icon: const Icon(Icons.remove, size: 18, color: C.textDim),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                                 ),
-                                const SizedBox(width: 8),
-                                Row(
-                                  children: [
-                                    IconButton(
-                                      onPressed: () {
-                                        ref.read(cartProvider.notifier).setQty(
-                                          item.product.productId,
-                                          item.qty - 1,
-                                        );
-                                      },
-                                      icon: const Icon(Icons.remove, size: 18, color: C.textDim),
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                                    ),
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                                      child: Text(
-                                        '${item.qty}',
-                                        style: GoogleFonts.syne(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w700,
-                                          color: C.white,
-                                        ),
-                                      ),
-                                    ),
-                                    IconButton(
-                                      onPressed: () => ref.read(cartProvider.notifier).updateQty(item.product.productId, item.qty + 1),
-                                      icon: const Icon(Icons.add, size: 18, color: C.textDim),
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(width: 12),
-                                Text(
-                                  fmtMoney(item.product.sellingPrice * item.qty),
-                                  style: GoogleFonts.syne(fontSize: 13, fontWeight: FontWeight.w700, color: C.primary),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                                  child: Text('${item.qty}', style: GoogleFonts.inter(
+                                      fontSize: 12, fontWeight: FontWeight.w700, color: C.white)),
                                 ),
                                 IconButton(
-                                  onPressed: () {
-                                    ref.read(cartProvider.notifier).setQty(item.product.productId, 0);
-                                  },
-                                  icon: const Icon(Icons.close, size: 18, color: C.textDim),
-                                  padding: const EdgeInsets.only(left: 4),
-                                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                  onPressed: () => ref.read(cartProvider.notifier)
+                                      .updateQty(item.product.productId, item.qty + 1),
+                                  icon: const Icon(Icons.add, size: 18, color: C.textDim),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                                 ),
-                              ],
-                            ),
+                              ]),
+                              const SizedBox(width: 12),
+                              Text(fmtMoney(item.product.sellingPrice * item.qty),
+                                  style: GoogleFonts.inter(fontSize: 13,
+                                      fontWeight: FontWeight.w700, color: C.primary)),
+                              IconButton(
+                                onPressed: () => ref.read(cartProvider.notifier)
+                                    .setQty(item.product.productId, 0),
+                                icon: const Icon(Icons.close, size: 18, color: C.textDim),
+                                padding: const EdgeInsets.only(left: 4),
+                                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                              ),
+                            ]),
                           );
                         },
                       ),
@@ -739,17 +768,14 @@ class _CartDrawer extends ConsumerWidget {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('Total', style: GoogleFonts.syne(fontSize: 14, fontWeight: FontWeight.w700, color: C.text)),
-                        Text(fmtMoney(total), style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w800, color: C.green)),
+                        Text('Total', style: GoogleFonts.inter(
+                            fontSize: 14, fontWeight: FontWeight.w700, color: C.text)),
+                        Text(fmtMoney(total), style: GoogleFonts.plusJakartaSans(
+                            fontSize: 16, fontWeight: FontWeight.w800, color: C.green)),
                       ],
                     ),
                     const SizedBox(height: 12),
-                    PBtn(
-                      label: 'Go to POS',
-                      onTap: onGoToPos,
-                      full: true,
-                      color: C.primary,
-                    ),
+                    PBtn(label: 'Go to POS', onTap: onGoToPos, full: true, color: C.primary),
                     const SizedBox(height: 8),
                     TextButton(
                       onPressed: () async {
@@ -757,47 +783,26 @@ class _CartDrawer extends ConsumerWidget {
                           context: context,
                           builder: (_) => AlertDialog(
                             backgroundColor: C.bgElevated,
-                            title: Text(
-                              'Clear cart?',
-                              style: GoogleFonts.syne(
-                                fontWeight: FontWeight.w800,
-                                color: C.white,
-                              ),
-                            ),
-                            content: Text(
-                              'This will remove all items from the cart.',
-                              style: GoogleFonts.syne(color: C.textMuted, fontSize: 13),
-                            ),
+                            title: Text('Clear cart?', style: GoogleFonts.plusJakartaSans(
+                                fontWeight: FontWeight.w800, color: C.white)),
+                            content: Text('This will remove all items from the cart.',
+                                style: GoogleFonts.inter(color: C.textMuted, fontSize: 13)),
                             actions: [
                               TextButton(
-                                onPressed: () => Navigator.of(context).pop(false),
-                                child: Text(
-                                  'Cancel',
-                                  style: GoogleFonts.syne(color: C.textMuted),
-                                ),
-                              ),
+                                  onPressed: () => Navigator.of(context).pop(false),
+                                  child: Text('Cancel',
+                                      style: GoogleFonts.inter(color: C.textMuted))),
                               TextButton(
-                                onPressed: () => Navigator.of(context).pop(true),
-                                child: Text(
-                                  'Clear',
-                                  style: GoogleFonts.syne(color: C.red, fontWeight: FontWeight.w700),
-                                ),
-                              ),
+                                  onPressed: () => Navigator.of(context).pop(true),
+                                  child: Text('Clear', style: GoogleFonts.inter(
+                                      color: C.red, fontWeight: FontWeight.w700))),
                             ],
                           ),
                         );
-                        if (confirm == true) {
-                          ref.read(cartProvider.notifier).clear();
-                        }
+                        if (confirm == true) ref.read(cartProvider.notifier).clear();
                       },
-                      child: Text(
-                        'Clear cart',
-                        style: GoogleFonts.syne(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: C.textMuted,
-                        ),
-                      ),
+                      child: Text('Clear cart', style: GoogleFonts.inter(
+                          fontSize: 12, fontWeight: FontWeight.w600, color: C.textMuted)),
                     ),
                   ],
                 ],
@@ -816,7 +821,7 @@ class _CartSheet extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cart = ref.watch(cartProvider);
+    final cart  = ref.watch(cartProvider);
     final total = cart.fold<double>(0, (s, c) => s + c.product.sellingPrice * c.qty);
     return Container(
       margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
@@ -835,21 +840,19 @@ class _CartSheet extends ConsumerWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Cart', style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w800, color: C.white)),
+                  Text('Cart', style: GoogleFonts.plusJakartaSans(
+                      fontSize: 16, fontWeight: FontWeight.w800, color: C.white)),
                   IconButton(
-                    icon: const Icon(Icons.close, color: C.textDim),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
+                      icon: const Icon(Icons.close, color: C.textDim),
+                      onPressed: () => Navigator.of(context).pop()),
                 ],
               ),
               const SizedBox(height: 8),
               if (cart.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 32),
-                  child: Text(
-                    'Your cart is empty',
-                    style: GoogleFonts.syne(fontSize: 13, color: C.textMuted),
-                  ),
+                  child: Text('Your cart is empty',
+                      style: GoogleFonts.inter(fontSize: 13, color: C.textMuted)),
                 )
               else
                 Flexible(
@@ -859,82 +862,53 @@ class _CartSheet extends ConsumerWidget {
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (_, i) {
                       final item = cart[i];
-                      return Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  item.product.productName,
-                                  style: GoogleFonts.syne(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: C.text,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  '${fmtMoney(item.product.sellingPrice)} each',
-                                  style: GoogleFonts.syne(fontSize: 11, color: C.textMuted),
-                                ),
-                              ],
-                            ),
+                      return Row(children: [
+                        Expanded(child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(item.product.productName,
+                                style: GoogleFonts.inter(fontSize: 13,
+                                    fontWeight: FontWeight.w600, color: C.text),
+                                overflow: TextOverflow.ellipsis),
+                            const SizedBox(height: 2),
+                            Text('${fmtMoney(item.product.sellingPrice)} each',
+                                style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
+                          ],
+                        )),
+                        const SizedBox(width: 8),
+                        Row(children: [
+                          IconButton(
+                            onPressed: () => ref.read(cartProvider.notifier)
+                                .setQty(item.product.productId, item.qty - 1),
+                            icon: const Icon(Icons.remove, size: 18, color: C.textDim),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                           ),
-                          const SizedBox(width: 8),
-                          Row(
-                            children: [
-                              IconButton(
-                                onPressed: () {
-                                  ref.read(cartProvider.notifier).setQty(
-                                    item.product.productId,
-                                    item.qty - 1,
-                                  );
-                                },
-                                icon: const Icon(Icons.remove, size: 18, color: C.textDim),
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 4),
-                                child: Text(
-                                  '${item.qty}',
-                                  style: GoogleFonts.syne(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: C.white,
-                                  ),
-                                ),
-                              ),
-                              IconButton(
-                                onPressed: () {
-                                  ref.read(cartProvider.notifier).setQty(
-                                    item.product.productId,
-                                    item.qty + 1,
-                                  );
-                                },
-                                icon: const Icon(Icons.add, size: 18, color: C.textDim),
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            fmtMoney(item.product.sellingPrice * item.qty),
-                            style: GoogleFonts.syne(fontSize: 13, fontWeight: FontWeight.w700, color: C.primary),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: Text('${item.qty}', style: GoogleFonts.inter(
+                                fontSize: 12, fontWeight: FontWeight.w700, color: C.white)),
                           ),
                           IconButton(
-                            onPressed: () {
-                              ref.read(cartProvider.notifier).setQty(item.product.productId, 0);
-                            },
-                            icon: const Icon(Icons.close, size: 18, color: C.textDim),
-                            padding: const EdgeInsets.only(left: 4),
-                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                            onPressed: () => ref.read(cartProvider.notifier)
+                                .setQty(item.product.productId, item.qty + 1),
+                            icon: const Icon(Icons.add, size: 18, color: C.textDim),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                           ),
-                        ],
-                      );
+                        ]),
+                        const SizedBox(width: 12),
+                        Text(fmtMoney(item.product.sellingPrice * item.qty),
+                            style: GoogleFonts.inter(fontSize: 13,
+                                fontWeight: FontWeight.w700, color: C.primary)),
+                        IconButton(
+                          onPressed: () => ref.read(cartProvider.notifier)
+                              .setQty(item.product.productId, 0),
+                          icon: const Icon(Icons.close, size: 18, color: C.textDim),
+                          padding: const EdgeInsets.only(left: 4),
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                        ),
+                      ]);
                     },
                   ),
                 ),
@@ -943,17 +917,14 @@ class _CartSheet extends ConsumerWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('Total', style: GoogleFonts.syne(fontSize: 14, fontWeight: FontWeight.w700, color: C.text)),
-                    Text(fmtMoney(total), style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w800, color: C.green)),
+                    Text('Total', style: GoogleFonts.inter(
+                        fontSize: 14, fontWeight: FontWeight.w700, color: C.text)),
+                    Text(fmtMoney(total), style: GoogleFonts.plusJakartaSans(
+                        fontSize: 16, fontWeight: FontWeight.w800, color: C.green)),
                   ],
                 ),
                 const SizedBox(height: 12),
-                PBtn(
-                  label: 'Go to POS',
-                  onTap: onGoToPos,
-                  full: true,
-                  color: C.primary,
-                ),
+                PBtn(label: 'Go to POS', onTap: onGoToPos, full: true, color: C.primary),
                 const SizedBox(height: 8),
                 TextButton(
                   onPressed: () async {
@@ -961,47 +932,26 @@ class _CartSheet extends ConsumerWidget {
                       context: context,
                       builder: (_) => AlertDialog(
                         backgroundColor: C.bgElevated,
-                        title: Text(
-                          'Clear cart?',
-                          style: GoogleFonts.syne(
-                            fontWeight: FontWeight.w800,
-                            color: C.white,
-                          ),
-                        ),
-                        content: Text(
-                          'This will remove all items from the cart.',
-                          style: GoogleFonts.syne(color: C.textMuted, fontSize: 13),
-                        ),
+                        title: Text('Clear cart?', style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w800, color: C.white)),
+                        content: Text('This will remove all items from the cart.',
+                            style: GoogleFonts.inter(color: C.textMuted, fontSize: 13)),
                         actions: [
                           TextButton(
-                            onPressed: () => Navigator.of(context).pop(false),
-                            child: Text(
-                              'Cancel',
-                              style: GoogleFonts.syne(color: C.textMuted),
-                            ),
-                          ),
+                              onPressed: () => Navigator.of(context).pop(false),
+                              child: Text('Cancel',
+                                  style: GoogleFonts.inter(color: C.textMuted))),
                           TextButton(
-                            onPressed: () => Navigator.of(context).pop(true),
-                            child: Text(
-                              'Clear',
-                              style: GoogleFonts.syne(color: C.red, fontWeight: FontWeight.w700),
-                            ),
-                          ),
+                              onPressed: () => Navigator.of(context).pop(true),
+                              child: Text('Clear', style: GoogleFonts.inter(
+                                  color: C.red, fontWeight: FontWeight.w700))),
                         ],
                       ),
                     );
-                    if (confirm == true) {
-                      ref.read(cartProvider.notifier).clear();
-                    }
+                    if (confirm == true) ref.read(cartProvider.notifier).clear();
                   },
-                  child: Text(
-                    'Clear cart',
-                    style: GoogleFonts.syne(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: C.textMuted,
-                    ),
-                  ),
+                  child: Text('Clear cart', style: GoogleFonts.inter(
+                      fontSize: 12, fontWeight: FontWeight.w600, color: C.textMuted)),
                 ),
               ],
             ],

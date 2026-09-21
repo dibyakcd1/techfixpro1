@@ -1,86 +1,54 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
+import '../services/supabase_service.dart';
 
 class PhotoService {
-  static final _storage = FirebaseStorage.instance;
+  static final _storage = SupabaseService().client.storage;
 
-  /// Compresses an image to be below 100 KB
-  static Future<File?> compressImage(String path) async {
-    final file = File(path);
-    final size = await file.length();
-    
-    // If already below 100 KB, no need to compress heavily
-    if (size < 100 * 1024) return file;
-
-    final dir = await getTemporaryDirectory();
-    final targetPath = '${dir.path}/${const Uuid().v4()}.jpg';
-
-    // Start with quality 80 and reduce until < 100 KB or quality < 10
-    int quality = 80;
-    XFile? result;
-    
-    while (quality > 10) {
-      result = await FlutterImageCompress.compressAndGetFile(
-        path,
-        targetPath,
-        quality: quality,
-        minWidth: 1024,
-        minHeight: 1024,
-      );
-      
-      if (result == null) break;
-      final newSize = await File(result.path).length();
-      if (newSize < 100 * 1024) break;
-      quality -= 15;
-    }
-    
-    return result != null ? File(result.path) : file;
-  }
-
-  /// Uploads a photo to Firebase Storage and returns the download URL.
-  /// [onProgress] receives 0.0 → 1.0 as bytes transfer for live progress bars.
+  /// Uploads a photo to Supabase Storage and returns the download URL.
+  /// Supports both mobile (file path) and web (XFile or bytes)
   static Future<String?> uploadPhoto(
-    String path,
+    dynamic imageSource,
     String folder, {
     void Function(double progress)? onProgress,
   }) async {
     try {
-      final file = File(path);
-      if (!await file.exists()) {
-        debugPrint('[PhotoService] File does not exist at path: $path');
-        return null;
-      }
+      Uint8List? bytes;
 
-      // 1. Compress to < 100 KB
-      final compressed = await compressImage(path);
-      if (compressed == null) {
-        debugPrint('[PhotoService] Compression failed for: $path');
-        return null;
-      }
-
-      // 2. Upload to Firebase Storage
-      final fileName = '${const Uuid().v4()}.jpg';
-      final ref = _storage.ref().child('$folder/$fileName');
-      final uploadTask = ref.putFile(
-        compressed,
-        SettableMetadata(contentType: 'image/jpeg'),
-      );
-
-      // Pipe progress to caller and debug log
-      uploadTask.snapshotEvents.listen((event) {
-        if (event.totalBytes > 0) {
-          final p = event.bytesTransferred / event.totalBytes;
-          debugPrint('[PhotoService] Upload ${(p * 100).toStringAsFixed(1)}%');
-          onProgress?.call(p);
+      if (imageSource is String) {
+        // Mobile: file path
+        final file = File(imageSource);
+        if (!await file.exists()) {
+          debugPrint('[PhotoService] File does not exist at path: $imageSource');
+          return null;
         }
-      });
+        bytes = await file.readAsBytes();
+      } else if (imageSource is XFile) {
+        // Web/mobile: XFile
+        bytes = await imageSource.readAsBytes();
+      } else {
+        debugPrint('[PhotoService] Unsupported image source type');
+        return null;
+      }
 
-      final snapshot = await uploadTask;
-      final url = await snapshot.ref.getDownloadURL();
+      // 2. Upload to Supabase Storage (using 'photos' bucket)
+      final fileName = '${const Uuid().v4()}.jpg';
+      final pathInBucket = '$folder/$fileName';
+      
+      // Upload bytes
+      await _storage
+          .from('photos')
+          .uploadBinary(pathInBucket, bytes);
+      
+      onProgress?.call(1.0);
+
+      // Get public URL
+      final url = _storage
+          .from('photos')
+          .getPublicUrl(pathInBucket);
+      
       debugPrint('[PhotoService] Upload successful: $url');
       return url;
     } catch (e) {
@@ -103,12 +71,21 @@ class PhotoService {
     return urls;
   }
 
-  /// Deletes a photo from Firebase Storage by its download URL.
+  /// Deletes a photo from Supabase Storage by its download URL.
   /// Silent no-op for non-Storage URLs or network failures.
   static Future<void> deleteByUrl(String url) async {
-    if (!url.startsWith('https://firebasestorage')) return;
     try {
-      await _storage.refFromURL(url).delete();
+      // Parse the bucket path from the URL (assuming it's a Supabase Storage URL)
+      // Typical URL format: https://<project>.supabase.co/storage/v1/object/public/photos/...
+      final uri = Uri.parse(url);
+      final pathSegments = uri.pathSegments;
+      if (pathSegments.length < 5) return;
+
+      // Extract the path after 'public'
+      final bucketName = pathSegments[4];
+      final filePath = pathSegments.sublist(5).join('/');
+
+      await _storage.from(bucketName).remove([filePath]);
       debugPrint('[PhotoService] Deleted: $url');
     } catch (e) {
       debugPrint('[PhotoService] deleteByUrl ignored: $e');

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:typed_data';
@@ -13,6 +13,8 @@ import '../theme/t.dart';
 import '../widgets/w.dart';
 import '../data/photo_service.dart';
 import 'notify.dart';
+import '../services/supabase_service.dart';
+import '../services/inventory_repair_service.dart';
 
 class RepairDetailScreen extends ConsumerStatefulWidget {
   final String jobId;
@@ -62,10 +64,9 @@ class _RDState extends ConsumerState<RepairDetailScreen>
         subtotal: subtotal,
         taxAmt: taxAmt,
         grandTotal: grandTotal,
-        onSaveToFirebase: () async {
+        onSave: () async {
           final role = ref.read(currentUserProvider).asData?.value?.role ?? 'technician';
           if (!RoleAccess.canCreateInvoice(role)) return null;
-          final db = FirebaseDatabase.instance;
           final invId = 'inv_${DateTime.now().millisecondsSinceEpoch}';
           final invNo = '${s.invoicePrefix.isEmpty ? 'INV' : s.invoicePrefix}-${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}';
           final lineItems = [
@@ -85,11 +86,16 @@ class _RDState extends ConsumerState<RepairDetailScreen>
             'amountPaid': 0.0, 'balanceDue': grandTotal, 'notes': '',
             'pdfUrl': '', 'issuedAt': DateTime.now().toIso8601String(),
           };
-          await db.ref().update({
-            'invoices/$invId': invoice,
-            'jobs/${job.jobId}/invoiceId': invId,
-            'jobs/${job.jobId}/updatedAt': DateTime.now().toIso8601String(),
-          });
+          await SupabaseService.instance.client
+              .from('invoices')
+              .insert(invoice);
+          await SupabaseService.instance.client
+              .from('jobs')
+              .update({
+                'invoiceId': invId,
+                'updatedAt': DateTime.now().toIso8601String(),
+              })
+              .eq('jobId', job.jobId);
           ref.read(jobsProvider.notifier).updateJob(
             job.copyWith(invoiceId: invId, updatedAt: DateTime.now().toIso8601String()));
           return invNo;
@@ -267,7 +273,12 @@ class _RDState extends ConsumerState<RepairDetailScreen>
       ],
     );
     if (reason != null && mounted) {
-      ref.read(jobsProvider.notifier).cancel(job.jobId, reason, 'Current User');
+      await InventoryRepairService.releaseParts(
+        ref: ref,
+        job: job,
+        by: 'Current User',
+      );
+      await ref.read(jobsProvider.notifier).cancel(job.jobId, reason, 'Current User');
       _snack('Job cancelled', C.red);
     }
   }
@@ -315,7 +326,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
 
   void _snack(String msg, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg, style: GoogleFonts.syne(fontWeight: FontWeight.w700)),
+      content: Text(msg, style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
       backgroundColor: color,
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -332,7 +343,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
     return Scaffold(
       backgroundColor: C.bg,
       appBar: AppBar(
-        title: Text(job.jobNumber, style: GoogleFonts.syne(fontSize: 15, fontWeight: FontWeight.w700)),
+        title: Text(job.jobNumber, style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w700)),
         leading: IconButton(
             icon: const Icon(Icons.arrow_back_ios_new, size: 18),
             onPressed: () => Navigator.of(context).pop()),
@@ -378,7 +389,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
                   const SizedBox(width: 8),
                   Text(
                     'This device is currently covered by shop warranty.',
-                    style: GoogleFonts.syne(fontSize: 12, fontWeight: FontWeight.w600, color: C.green),
+                    style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600, color: C.green),
                   ),
                 ],
               ),
@@ -394,7 +405,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
                     children: [
                       Text(
                         job.customerName,
-                        style: GoogleFonts.syne(
+                        style: GoogleFonts.inter(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
                           color: C.white,
@@ -403,7 +414,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
                       const SizedBox(height: 2),
                       Text(
                         'Total ${fmtMoney(job.totalAmount)} · ${job.technicianName.isEmpty ? "Unassigned" : job.technicianName}',
-                        style: GoogleFonts.syne(
+                        style: GoogleFonts.inter(
                           fontSize: 11,
                           color: C.textMuted,
                         ),
@@ -414,7 +425,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
                 if (job.isOverdue)
                   Text(
                     'Overdue',
-                    style: GoogleFonts.syne(
+                    style: GoogleFonts.inter(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
                       color: C.red,
@@ -423,7 +434,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
                 else if (job.isUnderWarranty)
                   Text(
                     'Under Warranty',
-                    style: GoogleFonts.syne(
+                    style: GoogleFonts.inter(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
                       color: C.green,
@@ -432,7 +443,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
                 else if (job.estimatedEndDate.isNotEmpty)
                   Text(
                     job.estimatedEndDate,
-                    style: GoogleFonts.syne(
+                    style: GoogleFonts.inter(
                       fontSize: 11,
                       color: C.textMuted,
                     ),
@@ -463,8 +474,8 @@ class _RDState extends ConsumerState<RepairDetailScreen>
               indicatorWeight: 3,
               labelColor: C.primary,
               unselectedLabelColor: C.textMuted,
-              labelStyle: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 11),
-              unselectedLabelStyle: GoogleFonts.syne(fontSize: 11),
+              labelStyle: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 11),
+              unselectedLabelStyle: GoogleFonts.inter(fontSize: 11),
               tabs: const [
                 Tab(text: '📋 Overview'),
                 Tab(text: '🧩 Parts'),
@@ -498,7 +509,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
   Widget _menuItem(String icon, String label, Color color) => Row(children: [
     Text(icon, style: const TextStyle(fontSize: 16)),
     const SizedBox(width: 10),
-    Text(label, style: GoogleFonts.syne(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+    Text(label, style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
   ]);
 
   Widget _buildHeader(Job job, Color sc, String? next) {
@@ -512,10 +523,10 @@ class _RDState extends ConsumerState<RepairDetailScreen>
         Row(children: [
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('${job.brand} ${job.model}',
-                style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 17, color: C.white)),
+                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 17, color: C.white)),
             if (job.color.isNotEmpty || job.imei.isNotEmpty)
               Text('${job.color}${job.imei.isNotEmpty ? " · IMEI: ${job.imei}" : ""}',
-                  style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
+                  style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
           ])),
           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
             Pill('${C.statusIcon(job.status)} ${job.status}', color: sc),
@@ -542,7 +553,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
               Text(C.statusIcon(job.status), style: const TextStyle(fontSize: 16)),
               const SizedBox(width: 8),
               Expanded(child: Text(job.holdReason!,
-                  style: GoogleFonts.syne(fontSize: 12, color: sc))),
+                  style: GoogleFonts.inter(fontSize: 12, color: sc))),
             ]),
           ),
         ],
@@ -565,7 +576,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
             Expanded(child: ElevatedButton.icon(
               onPressed: () => _doResume(job),
               icon: const Text('▶️', style: TextStyle(fontSize: 14)),
-              label: Text('Resume Job', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 13)),
+              label: Text('Resume Job', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13)),
               style: ElevatedButton.styleFrom(
                   backgroundColor: C.green, foregroundColor: C.bg,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -575,7 +586,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
             Expanded(child: OutlinedButton.icon(
               onPressed: () => _doCancel(job),
               icon: const Text('❌', style: TextStyle(fontSize: 13)),
-              label: Text('Cancel', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 12)),
+              label: Text('Cancel', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 12)),
               style: OutlinedButton.styleFrom(
                   foregroundColor: C.red, side: const BorderSide(color: C.red),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -585,7 +596,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
             Expanded(child: ElevatedButton.icon(
               onPressed: () => _doReopen(job),
               icon: const Text('🔓', style: TextStyle(fontSize: 14)),
-              label: Text('Re-open Job', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 13)),
+              label: Text('Re-open Job', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13)),
               style: ElevatedButton.styleFrom(
                   backgroundColor: C.green, foregroundColor: C.bg,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -598,7 +609,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
                     isScrollControlled: true, backgroundColor: Colors.transparent,
                     builder: (_) => NotifySheet(job: job)),
                 icon: const Icon(Icons.notifications_outlined, size: 16),
-                label: Text('Notify', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 12)),
+                label: Text('Notify', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 12)),
                 style: OutlinedButton.styleFrom(
                     foregroundColor: C.primary, side: const BorderSide(color: C.primary),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -610,7 +621,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
               onPressed: () => _advanceStatus(job),
               icon: Text(C.statusIcon(next), style: const TextStyle(fontSize: 13)),
               label: Text('→ $next',
-                  style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 12),
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 12),
                   overflow: TextOverflow.ellipsis),
               style: ElevatedButton.styleFrom(
                   backgroundColor: sc, foregroundColor: C.bg,
@@ -622,7 +633,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
               Expanded(child: OutlinedButton.icon(
                 onPressed: () => _doHold(job),
                 icon: const Text('⏸️', style: TextStyle(fontSize: 13)),
-                label: Text('Hold', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 12)),
+                label: Text('Hold', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 12)),
                 style: OutlinedButton.styleFrom(
                     foregroundColor: C.yellow, side: const BorderSide(color: C.yellow),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -636,7 +647,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
                       builder: (_) => NotifySheet(job: job)),
                   icon: const Icon(Icons.notifications_active_outlined, size: 14),
                   label: Text(job.notificationSent ? 'Resend' : 'Notify',
-                      style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 12)),
+                      style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 12)),
                   style: ElevatedButton.styleFrom(
                       backgroundColor: C.green, foregroundColor: C.bg,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -646,7 +657,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
                 Expanded(child: OutlinedButton.icon(
                   onPressed: () => _doCancel(job),
                   icon: const Text('❌', style: TextStyle(fontSize: 12)),
-                  label: Text('Cancel', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 11)),
+                  label: Text('Cancel', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 11)),
                   style: OutlinedButton.styleFrom(
                       foregroundColor: C.red, side: const BorderSide(color: C.red),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -665,7 +676,7 @@ class _RDState extends ConsumerState<RepairDetailScreen>
       decoration: BoxDecoration(color: C.bgCard, borderRadius: BorderRadius.circular(8), border: Border.all(color: C.border)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(icon, style: const TextStyle(fontSize: 10)),
-        Text(val, style: GoogleFonts.syne(fontSize: 10, fontWeight: FontWeight.w700, color: C.text),
+        Text(val, style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w700, color: C.text),
             overflow: TextOverflow.ellipsis),
       ]),
     ),
@@ -686,11 +697,11 @@ class _OverviewTab extends ConsumerWidget {
     child: Column(children: [
       // Problem
       SCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('🔧 Problem', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
+        Text('🔧 Problem', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
         const SizedBox(height: 8),
         Container(width: double.infinity, padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(color: C.bgElevated, borderRadius: BorderRadius.circular(10)),
-            child: Text(job.problem, style: GoogleFonts.syne(fontSize: 13, color: C.text, height: 1.6))),
+            child: Text(job.problem, style: GoogleFonts.inter(fontSize: 13, color: C.text, height: 1.6))),
         if (job.notes.isNotEmpty) ...[
           const SizedBox(height: 10),
           Container(
@@ -701,13 +712,13 @@ class _OverviewTab extends ConsumerWidget {
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: C.yellow.withValues(alpha: 0.3))),
               child: Text('📝 ${job.notes}',
-                  style: GoogleFonts.syne(fontSize: 12, color: C.yellow))),
+                  style: GoogleFonts.inter(fontSize: 12, color: C.yellow))),
         ],
       ])),
       const SizedBox(height: 12),
       // Device details
       SCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('📱 Device', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
+        Text('📱 Device', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
         const SizedBox(height: 10),
         ...[['Brand', job.brand], ['Model', job.model], if (job.color.isNotEmpty) ['Color', job.color],
             if (job.imei.isNotEmpty) ['IMEI', job.imei], ['Priority', job.priority],
@@ -715,8 +726,8 @@ class _OverviewTab extends ConsumerWidget {
             ['Start Date', job.createdAt.split('T')[0]], ['Expected End', job.estimatedEndDate]]
           .map((r) => Padding(padding: const EdgeInsets.only(bottom: 7),
             child: Row(children: [
-              SizedBox(width: 90, child: Text(r[0], style: GoogleFonts.syne(fontSize: 12, color: C.textMuted))),
-              Expanded(child: Text(r[1], style: GoogleFonts.syne(fontSize: 12, fontWeight: FontWeight.w600, color: C.text))),
+              SizedBox(width: 90, child: Text(r[0], style: GoogleFonts.inter(fontSize: 12, color: C.textMuted))),
+              Expanded(child: Text(r[1], style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600, color: C.text))),
             ]))),
         if (job.isOverdue)
           Container(
@@ -729,23 +740,23 @@ class _OverviewTab extends ConsumerWidget {
               child: Row(children: [
                 const Icon(Icons.warning_amber_rounded, color: C.red, size: 16),
                 const SizedBox(width: 6),
-                Text('This job is OVERDUE!', style: GoogleFonts.syne(fontSize: 12, color: C.red, fontWeight: FontWeight.w700)),
+                Text('This job is OVERDUE!', style: GoogleFonts.inter(fontSize: 12, color: C.red, fontWeight: FontWeight.w700)),
               ])),
       ])),
       const SizedBox(height: 12),
       // Parts
       SCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('🧩 Parts Used', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
+        Text('🧩 Parts Used', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
         const SizedBox(height: 10),
         if (job.partsUsed.isEmpty)
-          Text('No parts recorded yet', style: GoogleFonts.syne(fontSize: 13, color: C.textDim))
+          Text('No parts recorded yet', style: GoogleFonts.inter(fontSize: 13, color: C.textDim))
         else ...job.partsUsed.map((p) => Padding(padding: const EdgeInsets.only(bottom: 8),
           child: Row(children: [
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(p.name, style: GoogleFonts.syne(fontWeight: FontWeight.w600, fontSize: 13, color: C.text)),
-              Text('Qty: ${p.quantity}', style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
+              Text(p.name, style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13, color: C.text)),
+              Text('Qty: ${p.quantity}', style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
             ])),
-            Text(fmtMoney(p.price * p.quantity), style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.primary)),
+            Text(fmtMoney(p.price * p.quantity), style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.primary)),
           ]))),
       ])),
       const SizedBox(height: 12),
@@ -767,12 +778,89 @@ class _OverviewTab extends ConsumerWidget {
 // ═══════════════════════════════════════════════════════════════
 //  PARTS TAB
 // ═══════════════════════════════════════════════════════════════
-class _PartsTab extends ConsumerWidget {
+class _PartsTab extends ConsumerStatefulWidget {
   final Job job;
   const _PartsTab({required this.job});
+  
+  @override
+  ConsumerState<_PartsTab> createState() => _PartsTabState();
+}
+
+class _PartsTabState extends ConsumerState<_PartsTab> {
+  
+  Future<void> _syncProductsFromSupabase(String shopId) async {
+    try {
+      final response = await SupabaseService.instance.client
+          .from('products')
+          .select()
+          .eq('shopId', shopId);
+      if (!mounted) return; // Check if widget is still mounted before proceeding
+      final list = <Product>[];
+      for (final data in response) {
+        final key = data['productId'] as String?;
+        if (key == null) continue;
+        list.add(Product(
+          productId: key,
+          shopId: (data['shopId'] as String?) ?? shopId,
+          sku: (data['sku'] as String?) ?? '',
+          productName: (data['productName'] as String?) ?? (data['name'] as String?) ?? '',
+          category: (data['category'] as String?) ?? (data['cat'] as String?) ?? 'Spare Parts',
+          brand: (data['brand'] as String?) ?? '',
+          description: (data['description'] as String?) ?? '',
+          supplierName: (data['supplierName'] as String?) ?? (data['supplier'] as String?) ?? '',
+          costPrice: (data['costPrice'] as num?)?.toDouble() ?? (data['cost'] as num?)?.toDouble() ?? 0,
+          sellingPrice: (data['sellingPrice'] as num?)?.toDouble() ?? (data['price'] as num?)?.toDouble() ?? 0,
+          stockQty: (data['stockQty'] as int?) ?? (data['qty'] as int?) ?? 0,
+          reorderLevel: (data['reorderLevel'] as int?) ?? (data['reorder'] as int?) ?? 5,
+          isActive: (data['isActive'] as bool?) ?? true,
+          imageUrl: (data['imageUrl'] as String?) ?? '',
+          createdAt: (data['createdAt'] as String?) ?? '',
+          updatedAt: (data['updatedAt'] as String?) ?? '',
+        ));
+      }
+      ref.read(productsProvider.notifier).setAll(list);
+    } catch (e) {
+      debugPrint('Error syncing products: $e');
+    }
+  }
+
+  Future<void> _removePart(BuildContext context, PartUsed part) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: C.bgElevated,
+        title: Text('Remove Part?', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, color: C.white)),
+        content: Text('This will also return ${part.quantity} unit(s) back to inventory.',
+            style: GoogleFonts.inter(fontSize: 13, color: C.textMuted)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove', style: TextStyle(color: C.red))),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        final session = ref.read(currentUserProvider).asData?.value;
+        final shopId = session?.shopId ?? widget.job.shopId;
+        await InventoryRepairService.removePart(
+          ref: ref,
+          job: widget.job,
+          part: part,
+          by: 'Current User',
+        );
+        if (shopId.isNotEmpty && mounted) {
+          await _syncProductsFromSupabase(shopId);
+        }
+      } catch (e) {
+        debugPrint('Error removing part: $e');
+        // Optional: Show an error SnackBar here if needed
+      }
+    }
+  }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
       child: Column(
@@ -785,48 +873,48 @@ class _PartsTab extends ConsumerWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('🧩 Parts Used', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
+                    Text('🧩 Parts Used', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
                     PBtn(
                       label: '+ Add from Inventory',
-                      onTap: () => _showAddPartDialog(context, ref, job),
+                      onTap: () => _showAddPartDialog(context),
                       small: true,
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-                if (job.partsUsed.isEmpty)
+                if (widget.job.partsUsed.isEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 20),
                     child: Center(
                       child: Text('No parts added from inventory yet.',
-                          style: GoogleFonts.syne(fontSize: 13, color: C.textDim)),
+                          style: GoogleFonts.inter(fontSize: 13, color: C.textDim)),
                     ),
                   )
                 else
                   ListView.separated(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
-                    itemCount: job.partsUsed.length,
+                    itemCount: widget.job.partsUsed.length,
                     separatorBuilder: (_, __) => const Divider(color: C.border, height: 20),
                     itemBuilder: (_, i) {
-                      final p = job.partsUsed[i];
+                      final p = widget.job.partsUsed[i];
                       return Row(
                         children: [
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(p.name, style: GoogleFonts.syne(fontWeight: FontWeight.w600, fontSize: 13, color: C.text)),
+                                Text(p.name, style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13, color: C.text)),
                                 Text('Qty: ${p.quantity} · ${fmtMoney(p.price)} each',
-                                    style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
+                                    style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
                               ],
                             ),
                           ),
                           Text(fmtMoney(p.price * p.quantity),
-                              style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.primary)),
+                              style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.primary)),
                           const SizedBox(width: 8),
                           IconButton(
-                            onPressed: () => _removePart(context, ref, job, p),
+                            onPressed: () => _removePart(context, p),
                             icon: const Icon(Icons.delete_outline, size: 18, color: C.red),
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -843,8 +931,8 @@ class _PartsTab extends ConsumerWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Total Parts Cost', style: GoogleFonts.syne(fontWeight: FontWeight.w600, fontSize: 13, color: C.textMuted)),
-                Text(fmtMoney(job.partsCost), style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 16, color: C.primary)),
+                Text('Total Parts Cost', style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13, color: C.textMuted)),
+                Text(fmtMoney(widget.job.partsCost), style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 16, color: C.primary)),
               ],
             ),
           ),
@@ -853,94 +941,32 @@ class _PartsTab extends ConsumerWidget {
     );
   }
 
-  void _showAddPartDialog(BuildContext context, WidgetRef ref, Job job) {
-    showDialog(
+  Future<void> _showAddPartDialog(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final part = await showDialog<PartUsed>(
       context: context,
-      builder: (context) => _AddPartDialog(job: job),
+      builder: (context) => _AddPartDialog(job: widget.job),
     );
-  }
+    if (part == null || !mounted) return;
 
-  Future<void> _removePart(BuildContext context, WidgetRef ref, Job job, PartUsed part) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: C.bgElevated,
-        title: Text('Remove Part?', style: GoogleFonts.syne(fontWeight: FontWeight.w800, color: C.white)),
-        content: Text('This will also return ${part.quantity} unit(s) back to inventory.',
-            style: GoogleFonts.syne(fontSize: 13, color: C.textMuted)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove', style: TextStyle(color: C.red))),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      try {
-        final db = FirebaseDatabase.instance;
-        final batch = <String, dynamic>{};
-        
-        // 1. Update Job partsUsed
-        final newList = job.partsUsed.where((p) => p != part).toList();
-        final newPartsCost = newList.fold<double>(0, (s, p) => s + (p.price * p.quantity));
-        
-        // Calculate new total
-        final subtotal = job.laborCost + newPartsCost;
-        final disc = job.discountAmount;
-        final taxRate = ref.read(settingsProvider).defaultTaxRate;
-        final taxAmount = (subtotal - disc) * taxRate / 100;
-        final newTotal = subtotal - disc + taxAmount;
-
-        final updatedJob = job.copyWith(
-          partsUsed: newList,
-          partsCost: newPartsCost,
-          taxAmount: taxAmount,
-          totalAmount: newTotal,
-          updatedAt: DateTime.now().toIso8601String(),
+    try {
+      final session = ref.read(currentUserProvider).asData?.value;
+      final shopId = session?.shopId ?? widget.job.shopId;
+      await InventoryRepairService.applyParts(
+        ref: ref,
+        job: widget.job,
+        parts: [part],
+        by: 'Current User',
+      );
+      if (shopId.isNotEmpty && mounted) {
+        await _syncProductsFromSupabase(shopId);
+      }
+    } catch (e) {
+      debugPrint('Error adding part: $e');
+      if (mounted) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Could not add part')),
         );
-
-        batch['jobs/${job.jobId}/partsUsed'] = newList.map((p) => {
-          'productId': p.productId,
-          'name': p.name,
-          'quantity': p.quantity,
-          'price': p.price,
-        }).toList();
-        batch['jobs/${job.jobId}/partsCost'] = newPartsCost;
-        batch['jobs/${job.jobId}/taxAmount'] = taxAmount;
-        batch['jobs/${job.jobId}/totalAmount'] = newTotal;
-        batch['jobs/${job.jobId}/updatedAt'] = updatedJob.updatedAt;
-
-        // 2. Return stock to inventory
-        final products = ref.read(productsProvider);
-        final product = products.firstWhere((p) => p.productId == part.productId);
-        final newStockQty = product.stockQty + part.quantity;
-        
-        batch['products/${part.productId}/stockQty'] = newStockQty;
-        batch['products/${part.productId}/updatedAt'] = updatedJob.updatedAt;
-
-        // 3. Log stock history
-        final histId = 'h_${DateTime.now().millisecondsSinceEpoch}_${part.productId}';
-        batch['stock_history/$histId'] = {
-          'shopId': job.shopId,
-          'productId': part.productId,
-          'productName': part.name,
-          'oldQty': product.stockQty,
-          'newQty': newStockQty,
-          'delta': part.quantity,
-          'type': 'return_from_job',
-          'time': DateTime.now().millisecondsSinceEpoch,
-          'by': 'System',
-          'jobId': job.jobId,
-        };
-
-        await db.ref().update(batch);
-        
-        // Update local state
-        ref.read(jobsProvider.notifier).updateJob(updatedJob);
-        ref.read(productsProvider.notifier).adjustQty(part.productId, part.quantity);
-        
-      } catch (e) {
-        debugPrint('Error removing part: $e');
       }
     }
   }
@@ -957,7 +983,7 @@ class _AddPartDialog extends ConsumerStatefulWidget {
 class _AddPartDialogState extends ConsumerState<_AddPartDialog> {
   String _search = '';
   final _qtyCtrl = TextEditingController(text: '1');
-
+  
   @override
   void dispose() {
     _qtyCtrl.dispose();
@@ -974,7 +1000,7 @@ class _AddPartDialogState extends ConsumerState<_AddPartDialog> {
 
     return AlertDialog(
       backgroundColor: C.bgElevated,
-      title: Text('Add Part from Inventory', style: GoogleFonts.syne(fontWeight: FontWeight.w800, color: C.white)),
+      title: Text('Add Part from Inventory', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, color: C.white)),
       content: SizedBox(
         width: double.maxFinite,
         child: Column(
@@ -982,7 +1008,7 @@ class _AddPartDialogState extends ConsumerState<_AddPartDialog> {
           children: [
             TextField(
               onChanged: (v) => setState(() => _search = v),
-              style: GoogleFonts.syne(fontSize: 13, color: C.text),
+              style: GoogleFonts.inter(fontSize: 13, color: C.text),
               decoration: const InputDecoration(
                 hintText: 'Search parts...',
                 prefixIcon: Icon(Icons.search, size: 18),
@@ -994,7 +1020,7 @@ class _AddPartDialogState extends ConsumerState<_AddPartDialog> {
               child: filtered.isEmpty
                   ? Center(child: Padding(
                     padding: const EdgeInsets.all(20.0),
-                    child: Text('No matching parts in stock.', style: GoogleFonts.syne(color: C.textDim)),
+                    child: Text('No matching parts in stock.', style: GoogleFonts.inter(color: C.textDim)),
                   ))
                   : ListView.builder(
                       shrinkWrap: true,
@@ -1003,9 +1029,9 @@ class _AddPartDialogState extends ConsumerState<_AddPartDialog> {
                         final p = filtered[i];
                         return ListTile(
                           contentPadding: EdgeInsets.zero,
-                          title: Text(p.productName, style: GoogleFonts.syne(fontSize: 13, fontWeight: FontWeight.w600)),
+                          title: Text(p.productName, style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600)),
                           subtitle: Text('${p.stockQty} in stock · ${fmtMoney(p.sellingPrice)}',
-                              style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
+                              style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
                           trailing: IconButton(
                             icon: const Icon(Icons.add_circle_outline, color: C.primary),
                             onPressed: () => _confirmAdd(p),
@@ -1028,17 +1054,17 @@ class _AddPartDialogState extends ConsumerState<_AddPartDialog> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: C.bgElevated,
-        title: Text('Quantity for ${p.productName}', style: GoogleFonts.syne(fontSize: 15, fontWeight: FontWeight.w700)),
+        title: Text('Quantity for ${p.productName}', style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w700)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Available: ${p.stockQty}', style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+            Text('Available: ${p.stockQty}', style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
             const SizedBox(height: 12),
             TextField(
               controller: _qtyCtrl,
               keyboardType: TextInputType.number,
               autofocus: true,
-              style: GoogleFonts.syne(fontSize: 14, fontWeight: FontWeight.w700),
+              style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w700),
               decoration: const InputDecoration(labelText: 'Enter Quantity'),
             ),
           ],
@@ -1049,9 +1075,16 @@ class _AddPartDialogState extends ConsumerState<_AddPartDialog> {
             onPressed: () {
               final qty = int.tryParse(_qtyCtrl.text) ?? 0;
               if (qty > 0 && qty <= p.stockQty) {
-                Navigator.pop(context); // Close qty dialog
-                Navigator.pop(context); // Close search dialog
-                _addPartToJob(p, qty);
+                Navigator.pop(context);
+                Navigator.pop(
+                  context,
+                  PartUsed(
+                    productId: p.productId,
+                    name: p.productName,
+                    quantity: qty,
+                    price: p.sellingPrice,
+                  ),
+                );
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid quantity')));
               }
@@ -1063,79 +1096,7 @@ class _AddPartDialogState extends ConsumerState<_AddPartDialog> {
     );
   }
 
-  Future<void> _addPartToJob(Product product, int qty) async {
-    try {
-      final db = FirebaseDatabase.instance;
-      final batch = <String, dynamic>{};
-      final job = widget.job;
-      
-      // 1. Update Job partsUsed
-      final part = PartUsed(
-        productId: product.productId,
-        name: product.productName,
-        quantity: qty,
-        price: product.sellingPrice,
-      );
-      
-      final newList = [...job.partsUsed, part];
-      final newPartsCost = newList.fold<double>(0, (s, p) => s + (p.price * p.quantity));
-      
-      // Calculate new total
-      final subtotal = job.laborCost + newPartsCost;
-      final disc = job.discountAmount;
-      final taxRate = ref.read(settingsProvider).defaultTaxRate;
-      final taxAmount = (subtotal - disc) * taxRate / 100;
-      final newTotal = subtotal - disc + taxAmount;
 
-      final updatedJob = job.copyWith(
-        partsUsed: newList,
-        partsCost: newPartsCost,
-        taxAmount: taxAmount,
-        totalAmount: newTotal,
-        updatedAt: DateTime.now().toIso8601String(),
-      );
-
-      batch['jobs/${job.jobId}/partsUsed'] = newList.map((p) => {
-        'productId': p.productId,
-        'name': p.name,
-        'quantity': p.quantity,
-        'price': p.price,
-      }).toList();
-      batch['jobs/${job.jobId}/partsCost'] = newPartsCost;
-      batch['jobs/${job.jobId}/taxAmount'] = taxAmount;
-      batch['jobs/${job.jobId}/totalAmount'] = newTotal;
-      batch['jobs/${job.jobId}/updatedAt'] = updatedJob.updatedAt;
-
-      // 2. Deduct stock from inventory
-      final newStockQty = product.stockQty - qty;
-      batch['products/${product.productId}/stockQty'] = newStockQty;
-      batch['products/${product.productId}/updatedAt'] = updatedJob.updatedAt;
-
-      // 3. Log stock history
-      final histId = 'h_${DateTime.now().millisecondsSinceEpoch}_${product.productId}';
-      batch['stock_history/$histId'] = {
-        'shopId': job.shopId,
-        'productId': product.productId,
-        'productName': product.productName,
-        'oldQty': product.stockQty,
-        'newQty': newStockQty,
-        'delta': -qty,
-        'type': 'use_in_job',
-        'time': DateTime.now().millisecondsSinceEpoch,
-        'by': 'System',
-        'jobId': job.jobId,
-      };
-
-      await db.ref().update(batch);
-      
-      // Update local state
-      ref.read(jobsProvider.notifier).updateJob(updatedJob);
-      ref.read(productsProvider.notifier).adjustQty(product.productId, -qty);
-      
-    } catch (e) {
-      debugPrint('Error adding part: $e');
-    }
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1194,7 +1155,7 @@ class _EditTabState extends ConsumerState<_EditTab>
     super.dispose();
   }
 
-  void _save() {
+  void _save() async {
     final techs = ref.read(techsProvider);
     final session = ref.read(currentUserProvider).asData?.value;
     final shopId = session?.shopId ?? '';
@@ -1222,27 +1183,29 @@ class _EditTabState extends ConsumerState<_EditTab>
       updatedAt: DateTime.now().toIso8601String(),
     );
 
-    // Save to Firebase
+    // Save to Supabase
     try {
-      final db = FirebaseDatabase.instance;
-      db.ref('jobs/${widget.job.jobId}').update({
-        'brand': updated.brand,
-        'model': updated.model,
-        'imei': updated.imei,
-        'color': updated.color,
-        'problem': updated.problem,
-        'notes': updated.notes,
-        'priority': updated.priority,
-        'technicianId': updated.technicianId,
-        'technicianName': updated.technicianName,
-        'estimatedEndDate': updated.estimatedEndDate,
-        'laborCost': updated.laborCost,
-        'partsCost': updated.partsCost,
-        'discountAmount': updated.discountAmount,
-        'taxAmount': updated.taxAmount,
-        'totalAmount': updated.totalAmount,
-        'updatedAt': updated.updatedAt,
-      });
+      await SupabaseService.instance.client
+          .from('jobs')
+          .update({
+            'brand': updated.brand,
+            'model': updated.model,
+            'imei': updated.imei,
+            'color': updated.color,
+            'problem': updated.problem,
+            'notes': updated.notes,
+            'priority': updated.priority,
+            'technicianId': updated.technicianId,
+            'technicianName': updated.technicianName,
+            'estimatedEndDate': updated.estimatedEndDate,
+            'laborCost': updated.laborCost,
+            'partsCost': updated.partsCost,
+            'discountAmount': updated.discountAmount,
+            'taxAmount': updated.taxAmount,
+            'totalAmount': updated.totalAmount,
+            'updatedAt': updated.updatedAt,
+          })
+          .eq('jobId', widget.job.jobId);
     } catch (e) {
       debugPrint('Error saving job: $e');
     }
@@ -1289,16 +1252,16 @@ class _EditTabState extends ConsumerState<_EditTab>
           value: _priority,
           onChanged: (v) => setState(() => _priority = v ?? 'Normal'),
           items: ['Normal', 'Urgent', 'Express'].map((p) => DropdownMenuItem(value: p,
-              child: Text(p, style: GoogleFonts.syne(fontSize: 13)))).toList(),
+              child: Text(p, style: GoogleFonts.inter(fontSize: 13)))).toList(),
         ),
         AppDropdown<String>(
           label: 'Staff',
           value: _techId.isEmpty ? '' : (techs.any((t) => t.techId == _techId) ? _techId : ''),
           onChanged: (v) => setState(() => _techId = v ?? ''),
           items: [
-            DropdownMenuItem(value: '', child: Text('Unassigned', style: GoogleFonts.syne(fontSize: 13))),
+            DropdownMenuItem(value: '', child: Text('Unassigned', style: GoogleFonts.inter(fontSize: 13))),
             ...techs.where((t) => t.isActive).map((t) => DropdownMenuItem(value: t.techId,
-                child: Text('${t.name} · ⭐${t.rating}', style: GoogleFonts.syne(fontSize: 13)))),
+                child: Text('${t.name} · ⭐${t.rating}', style: GoogleFonts.inter(fontSize: 13)))),
           ],
         ),
 
@@ -1342,28 +1305,45 @@ class _PhotosTabState extends ConsumerState<_PhotosTab> {
   double? _intakeProgress;
   double? _completionProgress;
 
-  Future<void> _addPhoto(bool isIntake, String path) async {
+  /// Always read the freshest job from provider — widget.job can be stale
+  /// when the real-time stream delivers an update during an in-progress upload.
+  Job get _liveJob {
+    final jobs = ref.read(jobsProvider);
+    try {
+      return jobs.firstWhere((j) => j.jobId == widget.job.jobId);
+    } catch (_) {
+      return widget.job; // fallback if somehow removed
+    }
+  }
+
+  Future<void> _addPhoto(bool isIntake, XFile file) async {
     setState(() => isIntake ? _intakeProgress = 0.0 : _completionProgress = 0.0);
     try {
+      final job = _liveJob;   // snapshot the live job at upload start
       final folder = isIntake ? 'intake' : 'completion';
       final url = await PhotoService.uploadPhoto(
-        path,
-        'jobs/${widget.job.jobId}/$folder',
+        file,
+        'jobs/${job.jobId}/$folder',
         onProgress: (p) {
           if (mounted) setState(() => isIntake ? _intakeProgress = p : _completionProgress = p);
         },
       );
       if (url == null) { _err('Upload failed — please try again'); return; }
 
+      // Re-read job AFTER upload completes to avoid overwriting concurrent changes
+      final freshJob = _liveJob;
       final newJob = isIntake
-          ? widget.job.copyWith(intakePhotos: [...widget.job.intakePhotos, url])
-          : widget.job.copyWith(completionPhotos: [...widget.job.completionPhotos, url]);
+          ? freshJob.copyWith(intakePhotos: [...freshJob.intakePhotos, url])
+          : freshJob.copyWith(completionPhotos: [...freshJob.completionPhotos, url]);
 
-      await FirebaseDatabase.instance.ref('jobs/${widget.job.jobId}').update({
-        isIntake ? 'intakePhotos' : 'completionPhotos':
-            isIntake ? newJob.intakePhotos : newJob.completionPhotos,
-        'updatedAt': DateTime.now().toIso8601String(),
-      });
+      await SupabaseService.instance.client
+          .from('jobs')
+          .update({
+            isIntake ? 'intakePhotos' : 'completionPhotos':
+                isIntake ? newJob.intakePhotos : newJob.completionPhotos,
+            'updatedAt': DateTime.now().toIso8601String(),
+          })
+          .eq('jobId', job.jobId);
       ref.read(jobsProvider.notifier).updateJob(newJob);
     } catch (e) {
       _err('Upload failed: $e');
@@ -1373,19 +1353,23 @@ class _PhotosTabState extends ConsumerState<_PhotosTab> {
   }
 
   Future<void> _removePhoto(bool isIntake, int index) async {
+    final job = _liveJob;
     final list = isIntake
-        ? [...widget.job.intakePhotos]
-        : [...widget.job.completionPhotos];
+        ? [...job.intakePhotos]
+        : [...job.completionPhotos];
     final removedUrl = list[index];
     list.removeAt(index);
     final newJob = isIntake
-        ? widget.job.copyWith(intakePhotos: list)
-        : widget.job.copyWith(completionPhotos: list);
+        ? job.copyWith(intakePhotos: list)
+        : job.copyWith(completionPhotos: list);
     try {
-      await FirebaseDatabase.instance.ref('jobs/${widget.job.jobId}').update({
-        isIntake ? 'intakePhotos' : 'completionPhotos': list,
-        'updatedAt': DateTime.now().toIso8601String(),
-      });
+      await SupabaseService.instance.client
+          .from('jobs')
+          .update({
+            isIntake ? 'intakePhotos' : 'completionPhotos': list,
+            'updatedAt': DateTime.now().toIso8601String(),
+          })
+          .eq('jobId', job.jobId);
       ref.read(jobsProvider.notifier).updateJob(newJob);
       PhotoService.deleteByUrl(removedUrl); // fire-and-forget Storage cleanup
     } catch (e) {
@@ -1396,7 +1380,7 @@ class _PhotosTabState extends ConsumerState<_PhotosTab> {
   void _err(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('❌ $msg', style: GoogleFonts.syne(fontWeight: FontWeight.w700)),
+      content: Text('❌ $msg', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
       backgroundColor: C.red, behavior: SnackBarBehavior.floating,
     ));
   }
@@ -1415,19 +1399,19 @@ class _PhotosTabState extends ConsumerState<_PhotosTab> {
         SCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Expanded(child: Text('📥 Intake Photos',
-                style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.white))),
+                style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.white))),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
                   color: C.primary.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8)),
               child: Text('${job.intakePhotos.length} photo(s)',
-                  style: GoogleFonts.syne(fontSize: 11, color: C.primary, fontWeight: FontWeight.w700)),
+                  style: GoogleFonts.inter(fontSize: 11, color: C.primary, fontWeight: FontWeight.w700)),
             ),
           ]),
           const SizedBox(height: 4),
           Text('Device condition at check-in',
-              style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+              style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
           const SizedBox(height: 12),
           PhotoRow(
             photos: job.intakePhotos,
@@ -1444,7 +1428,7 @@ class _PhotosTabState extends ConsumerState<_PhotosTab> {
         SCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Expanded(child: Text('🏁 Completion Photos',
-                style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.white))),
+                style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.white))),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
@@ -1452,14 +1436,14 @@ class _PhotosTabState extends ConsumerState<_PhotosTab> {
                       ? C.green.withValues(alpha: 0.12) : C.border,
                   borderRadius: BorderRadius.circular(8)),
               child: Text('${job.completionPhotos.length} photo(s)',
-                  style: GoogleFonts.syne(fontSize: 11,
+                  style: GoogleFonts.inter(fontSize: 11,
                       color: job.completionPhotos.isNotEmpty ? C.green : C.textMuted,
                       fontWeight: FontWeight.w700)),
             ),
           ]),
           const SizedBox(height: 4),
           Text('Device condition after repair',
-              style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+              style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
           const SizedBox(height: 12),
           PhotoRow(
             photos: job.completionPhotos,
@@ -1481,7 +1465,7 @@ class _PhotosTabState extends ConsumerState<_PhotosTab> {
                 const SizedBox(width: 8),
                 Expanded(child: Text(
                     '⚠️ Add completion photos before marking Ready for Pickup',
-                    style: GoogleFonts.syne(fontSize: 12, color: C.yellow))),
+                    style: GoogleFonts.inter(fontSize: 12, color: C.yellow))),
               ]),
             ),
           ],
@@ -1497,20 +1481,20 @@ class _PhotosTabState extends ConsumerState<_PhotosTab> {
             border: Border.all(color: C.accent.withValues(alpha: 0.15)),
           ),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('📋 Photo Tips', style: GoogleFonts.syne(
+            Text('📋 Photo Tips', style: GoogleFonts.inter(
                 fontWeight: FontWeight.w700, color: C.accent, fontSize: 12)),
             const SizedBox(height: 8),
             ...[
               'Compressed to <100 KB before upload',
               'Tap thumbnail → full-screen swipe viewer',
               'Pinch to zoom · swipe left/right to browse',
-              'Stored in Firebase Storage · renders on any device',
+              'Stored locally · renders on any device',
             ].map((t) => Padding(
               padding: const EdgeInsets.only(bottom: 5),
               child: Row(children: [
                 const Icon(Icons.check_circle_outline, size: 13, color: C.accent),
                 const SizedBox(width: 7),
-                Expanded(child: Text(t, style: GoogleFonts.syne(fontSize: 11, color: C.text))),
+                Expanded(child: Text(t, style: GoogleFonts.inter(fontSize: 11, color: C.text))),
               ]),
             )),
           ]),
@@ -1533,7 +1517,7 @@ class _TimelineTab extends StatelessWidget {
   Widget build(BuildContext context) => SingleChildScrollView(
     padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
     child: SCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('📅 Job Timeline', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
+      Text('📅 Job Timeline', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
       const SizedBox(height: 14),
       ...job.timeline.asMap().entries.map((e) {
         final i = e.key;
@@ -1561,16 +1545,16 @@ class _TimelineTab extends StatelessWidget {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                 Expanded(child: Text(entry.status,
-                    style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 13, color: entryColor))),
-                Text(entry.time, style: GoogleFonts.syne(fontSize: 10, color: C.textMuted)),
+                    style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13, color: entryColor))),
+                Text(entry.time, style: GoogleFonts.inter(fontSize: 10, color: C.textMuted)),
               ]),
-              Text('by ${entry.by}', style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
+              Text('by ${entry.by}', style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
               if (entry.note.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Container(width: double.infinity,
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(color: C.bgElevated, borderRadius: BorderRadius.circular(8)),
-                    child: Text(entry.note, style: GoogleFonts.syne(fontSize: 12, color: C.text, height: 1.5))),
+                    child: Text(entry.note, style: GoogleFonts.inter(fontSize: 12, color: C.text, height: 1.5))),
               ],
               const SizedBox(height: 8),
             ]),
@@ -1578,10 +1562,10 @@ class _TimelineTab extends StatelessWidget {
         ]);
       }),
       const Divider(color: C.border, height: 24),
-      Text('ADD NOTE', style: GoogleFonts.syne(fontSize: 10, fontWeight: FontWeight.w700, color: C.textMuted, letterSpacing: 0.5)),
+      Text('ADD NOTE', style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w700, color: C.textMuted, letterSpacing: 0.5)),
       const SizedBox(height: 8),
       TextFormField(controller: noteCtrl, maxLines: 2,
-          style: GoogleFonts.syne(fontSize: 12, color: C.text),
+          style: GoogleFonts.inter(fontSize: 12, color: C.text),
           decoration: const InputDecoration(hintText: 'Add an update or observation...')),
       const SizedBox(height: 10),
       PBtn(label: '+ Add Note', onTap: onAddNote, small: true),
@@ -1605,7 +1589,7 @@ class _RepairInvoiceSheet extends StatefulWidget {
   final double subtotal;
   final double taxAmt;
   final double grandTotal;
-  final Future<String?> Function() onSaveToFirebase;
+  final Future<String?> Function() onSave;
   final Future<Uint8List> Function() buildPdf;
 
   const _RepairInvoiceSheet({
@@ -1616,7 +1600,7 @@ class _RepairInvoiceSheet extends StatefulWidget {
     required this.subtotal,
     required this.taxAmt,
     required this.grandTotal,
-    required this.onSaveToFirebase,
+    required this.onSave,
     required this.buildPdf,
   });
 
@@ -1633,7 +1617,7 @@ class _RepairInvoiceSheetState extends State<_RepairInvoiceSheet> {
     if (_saving || _savedInvNo != null) return;
     setState(() => _saving = true);
     try {
-      final invNo = await widget.onSaveToFirebase();
+      final invNo = await widget.onSave();
       if (mounted) setState(() => _savedInvNo = invNo);
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -1681,7 +1665,7 @@ class _RepairInvoiceSheetState extends State<_RepairInvoiceSheet> {
               child: Row(
                 children: [
                   Expanded(child: Text('Invoice Preview',
-                      style: GoogleFonts.syne(fontSize: 16,
+                      style: GoogleFonts.plusJakartaSans(fontSize: 16,
                           fontWeight: FontWeight.w800, color: C.white))),
                   if (_savedInvNo != null)
                     Container(
@@ -1691,7 +1675,7 @@ class _RepairInvoiceSheetState extends State<_RepairInvoiceSheet> {
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(color: C.green.withValues(alpha: 0.4))),
                       child: Text('Saved · $_savedInvNo',
-                          style: GoogleFonts.syne(fontSize: 11,
+                          style: GoogleFonts.inter(fontSize: 11,
                               fontWeight: FontWeight.w700, color: C.green)),
                     ),
                   const SizedBox(width: 8),
@@ -1723,18 +1707,18 @@ class _RepairInvoiceSheetState extends State<_RepairInvoiceSheet> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(s.shopName.isEmpty ? 'TechFix Pro' : s.shopName,
-                            style: GoogleFonts.syne(fontSize: 18,
+                            style: GoogleFonts.plusJakartaSans(fontSize: 18,
                                 fontWeight: FontWeight.w800, color: C.white)),
                         if (s.address.isNotEmpty) ...[
                           const SizedBox(height: 2),
-                          Text(s.address, style: GoogleFonts.syne(
+                          Text(s.address, style: GoogleFonts.inter(
                               fontSize: 11, color: C.textMuted)),
                         ],
                         if (s.phone.isNotEmpty)
-                          Text(s.phone, style: GoogleFonts.syne(
+                          Text(s.phone, style: GoogleFonts.inter(
                               fontSize: 11, color: C.textMuted)),
                         if (s.gstNumber.isNotEmpty)
-                          Text('GST: ${s.gstNumber}', style: GoogleFonts.syne(
+                          Text('GST: ${s.gstNumber}', style: GoogleFonts.inter(
                               fontSize: 11, color: C.textMuted)),
                         const SizedBox(height: 12),
                         const Divider(color: C.border, height: 1),
@@ -1746,28 +1730,28 @@ class _RepairInvoiceSheetState extends State<_RepairInvoiceSheet> {
                             Expanded(child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('BILL TO', style: GoogleFonts.syne(
+                                Text('BILL TO', style: GoogleFonts.inter(
                                     fontSize: 9, color: C.textMuted,
                                     letterSpacing: 0.8)),
                                 const SizedBox(height: 4),
-                                Text(j.customerName, style: GoogleFonts.syne(
+                                Text(j.customerName, style: GoogleFonts.inter(
                                     fontSize: 13, fontWeight: FontWeight.w700,
                                     color: C.white)),
-                                Text(j.customerPhone, style: GoogleFonts.syne(
+                                Text(j.customerPhone, style: GoogleFonts.inter(
                                     fontSize: 11, color: C.textMuted)),
                               ],
                             )),
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                Text('DATE', style: GoogleFonts.syne(
+                                Text('DATE', style: GoogleFonts.inter(
                                     fontSize: 9, color: C.textMuted,
                                     letterSpacing: 0.8)),
                                 const SizedBox(height: 4),
-                                Text(dateStr, style: GoogleFonts.syne(
+                                Text(dateStr, style: GoogleFonts.inter(
                                     fontSize: 12, fontWeight: FontWeight.w600,
                                     color: C.text)),
-                                Text('Job: ${j.jobNumber}', style: GoogleFonts.syne(
+                                Text('Job: ${j.jobNumber}', style: GoogleFonts.inter(
                                     fontSize: 11, color: C.textMuted)),
                               ],
                             ),
@@ -1786,11 +1770,11 @@ class _RepairInvoiceSheetState extends State<_RepairInvoiceSheet> {
                                 size: 14, color: C.textMuted),
                             const SizedBox(width: 6),
                             Text('${j.brand} ${j.model}',
-                                style: GoogleFonts.syne(fontSize: 12,
+                                style: GoogleFonts.inter(fontSize: 12,
                                     fontWeight: FontWeight.w600, color: C.text)),
                             if (j.imei.isNotEmpty) ...[
                               const SizedBox(width: 8),
-                              Text('IMEI: ${j.imei}', style: GoogleFonts.syne(
+                              Text('IMEI: ${j.imei}', style: GoogleFonts.inter(
                                   fontSize: 10, color: C.textMuted)),
                             ],
                           ]),
@@ -1819,16 +1803,16 @@ class _RepairInvoiceSheetState extends State<_RepairInvoiceSheet> {
                                 top: Radius.circular(13)),
                           ),
                           child: Row(children: [
-                            Expanded(child: Text('ITEM', style: GoogleFonts.syne(
+                            Expanded(child: Text('ITEM', style: GoogleFonts.inter(
                                 fontSize: 9, fontWeight: FontWeight.w700,
                                 color: C.primary, letterSpacing: 0.8))),
-                            Text('QTY', style: GoogleFonts.syne(
+                            Text('QTY', style: GoogleFonts.inter(
                                 fontSize: 9, fontWeight: FontWeight.w700,
                                 color: C.primary, letterSpacing: 0.8)),
                             const SizedBox(width: 50),
                             SizedBox(width: 72, child: Text('AMOUNT',
                                 textAlign: TextAlign.right,
-                                style: GoogleFonts.syne(
+                                style: GoogleFonts.inter(
                                     fontSize: 9, fontWeight: FontWeight.w700,
                                     color: C.primary, letterSpacing: 0.8))),
                           ]),
@@ -1849,7 +1833,7 @@ class _RepairInvoiceSheetState extends State<_RepairInvoiceSheet> {
                         Padding(
                           padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
                           child: Text('Service: ${j.problem}',
-                              style: GoogleFonts.syne(fontSize: 10,
+                              style: GoogleFonts.inter(fontSize: 10,
                                   color: C.textMuted, fontStyle: FontStyle.italic),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis),
@@ -1881,10 +1865,10 @@ class _RepairInvoiceSheetState extends State<_RepairInvoiceSheet> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text('TOTAL',
-                              style: GoogleFonts.syne(fontSize: 16,
+                              style: GoogleFonts.plusJakartaSans(fontSize: 16,
                                   fontWeight: FontWeight.w800, color: C.white)),
                           Text(fmtMoney(widget.grandTotal),
-                              style: GoogleFonts.syne(fontSize: 20,
+                              style: GoogleFonts.plusJakartaSans(fontSize: 20,
                                   fontWeight: FontWeight.w800, color: C.green)),
                         ],
                       ),
@@ -1901,7 +1885,7 @@ class _RepairInvoiceSheetState extends State<_RepairInvoiceSheet> {
                         ),
                         child: Text('⏳ Payment Pending',
                             textAlign: TextAlign.center,
-                            style: GoogleFonts.syne(fontSize: 12,
+                            style: GoogleFonts.inter(fontSize: 12,
                                 fontWeight: FontWeight.w700, color: C.yellow)),
                       ),
                     ]),
@@ -1934,7 +1918,7 @@ class _RepairInvoiceSheetState extends State<_RepairInvoiceSheet> {
                             size: 16),
                     label: Text(
                       _savedInvNo != null ? 'Saved' : 'Save Invoice',
-                      style: GoogleFonts.syne(
+                      style: GoogleFonts.inter(
                           fontWeight: FontWeight.w700, fontSize: 13),
                     ),
                     style: OutlinedButton.styleFrom(
@@ -1959,7 +1943,7 @@ class _RepairInvoiceSheetState extends State<_RepairInvoiceSheet> {
                                 strokeWidth: 2.5, color: Colors.white))
                         : const Icon(Icons.print_outlined, size: 18),
                     label: Text('Print / Share',
-                        style: GoogleFonts.syne(
+                        style: GoogleFonts.plusJakartaSans(
                             fontWeight: FontWeight.w800, fontSize: 14)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: C.primary,
@@ -1991,14 +1975,14 @@ class _LineItem extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
     child: Row(children: [
-      Expanded(child: Text(name, style: GoogleFonts.syne(
+      Expanded(child: Text(name, style: GoogleFonts.inter(
           fontSize: 12, fontWeight: FontWeight.w600, color: C.text))),
-      SizedBox(width: 30, child: Text('×$qty', style: GoogleFonts.syne(
+      SizedBox(width: 30, child: Text('×$qty', style: GoogleFonts.inter(
           fontSize: 12, color: C.textMuted))),
       const SizedBox(width: 20),
       SizedBox(width: 72, child: Text(fmtMoney(amount),
           textAlign: TextAlign.right,
-          style: GoogleFonts.syne(fontSize: 12,
+          style: GoogleFonts.inter(fontSize: 12,
               fontWeight: FontWeight.w700, color: C.text))),
     ]),
   );
@@ -2016,10 +2000,10 @@ class _TotalRow extends StatelessWidget {
     child: Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: GoogleFonts.syne(fontSize: 13, color: C.textMuted)),
+        Text(label, style: GoogleFonts.inter(fontSize: 13, color: C.textMuted)),
         Text(
           amount < 0 ? '-${fmtMoney(-amount)}' : fmtMoney(amount),
-          style: GoogleFonts.syne(
+          style: GoogleFonts.inter(
               fontSize: 13,
               fontWeight: FontWeight.w600,
               color: color ?? C.text),

@@ -1,11 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  data/active_session.dart
 //
-//  IN-APP SESSION LAYER — sits on top of Firebase Auth
+//  IN-APP SESSION LAYER — sits on top of Supabase Auth
 //
 //  Architecture:
 //  ┌─────────────────────────────────────────────────────────────┐
-//  │  Firebase Auth (owner signs in once — stays forever)        │
+//  │  Supabase Auth (owner signs in once — stays forever)        │
 //  │  ↓ never sign out unless owner explicitly chooses           │
 //  │  ┌───────────────────────────────────────────────────────┐  │
 //  │  │  activeSessionProvider  (in-memory, no DB write)      │  │
@@ -23,7 +23,7 @@
 //  4. Staff tap their name → enter PIN → activeSessionProvider = staff session.
 //  5. Owner can tap hidden logo area (5× rapid taps) to re-enter owner mode.
 //  6. "Log out" button signs out THIS staff member only → back to lock screen.
-//  7. Owner "Full sign out" → Firebase signOut → back to LoginScreen.
+//  7. Owner "Full sign out" → Supabase signOut → back to LoginScreen.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -57,7 +57,7 @@ class ActiveSession {
 class ActiveSessionNotifier extends StateNotifier<ActiveSession?> {
   ActiveSessionNotifier() : super(null);
 
-  /// Called right after owner Firebase login — puts the app in owner mode.
+  /// Called right after owner Supabase login — puts the app in owner mode.
   void loginAsOwner({
     required String uid,
     required String displayName,
@@ -92,7 +92,7 @@ class ActiveSessionNotifier extends StateNotifier<ActiveSession?> {
   }
 
   /// "Log out" this staff member → show lock screen again.
-  /// Does NOT touch Firebase Auth → DB stays connected.
+  /// Does NOT touch Supabase Auth → DB stays connected.
   void logoutStaff() => state = null;
 
   /// Owner chooses to operate as themselves (from hidden login).
@@ -112,7 +112,7 @@ class ActiveSessionNotifier extends StateNotifier<ActiveSession?> {
     );
   }
 
-  /// Full app reset — called by AppUtils.signOut before Firebase signOut.
+  /// Full app reset — called by AppUtils.signOut before Supabase signOut.
   void clear() => state = null;
 }
 

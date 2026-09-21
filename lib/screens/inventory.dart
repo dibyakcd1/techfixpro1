@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:http/http.dart' as http;
@@ -10,6 +9,7 @@ import '../models/m.dart';
 import '../data/providers.dart';
 import '../theme/t.dart';
 import '../widgets/w.dart';
+import '../services/supabase_service.dart';
 
 class InventoryScreen extends ConsumerStatefulWidget {
   const InventoryScreen({super.key});
@@ -22,39 +22,34 @@ class _InvState extends ConsumerState<InventoryScreen> {
   bool _synced = false;
   bool _syncing = false;
 
-  Future<void> _syncProductsFromFirebase(String shopId) async {
+  Future<void> _syncProductsFromSupabase(String shopId) async {
     try {
-      final db = FirebaseDatabase.instance;
-      final snap = await db.ref('products')
-          .orderByChild('shopId')
-          .equalTo(shopId)
-          .get();
+      final response = await SupabaseService.instance.client
+          .from('products')
+          .select()
+          .eq('shopId', shopId);
       final list = <Product>[];
-      if (snap.exists && snap.children.isNotEmpty) {
-        for (final child in snap.children) {
-          final key = child.key;
-          final value = child.value;
-          if (key == null || value is! Map) continue;
-          final data = Map<String, dynamic>.from(value);
-          list.add(Product(
-            productId: key,
-            shopId: (data['shopId'] as String?) ?? shopId,
-            sku: (data['sku'] as String?) ?? '',
-            productName: (data['productName'] as String?) ?? (data['name'] as String?) ?? '',
-            category: (data['category'] as String?) ?? (data['cat'] as String?) ?? 'Spare Parts',
-            brand: (data['brand'] as String?) ?? '',
-            description: (data['description'] as String?) ?? '',
-            supplierName: (data['supplierName'] as String?) ?? (data['supplier'] as String?) ?? '',
-            costPrice: (data['costPrice'] as num?)?.toDouble() ?? (data['cost'] as num?)?.toDouble() ?? 0,
-            sellingPrice: (data['sellingPrice'] as num?)?.toDouble() ?? (data['price'] as num?)?.toDouble() ?? 0,
-            stockQty: (data['stockQty'] as int?) ?? (data['qty'] as int?) ?? 0,
-            reorderLevel: (data['reorderLevel'] as int?) ?? (data['reorder'] as int?) ?? 5,
-            isActive: (data['isActive'] as bool?) ?? true,
-            imageUrl: (data['imageUrl'] as String?) ?? '',
-            createdAt: (data['createdAt'] as String?) ?? '',
-            updatedAt: (data['updatedAt'] as String?) ?? '',
-          ));
-        }
+      for (final data in response) {
+        final key = data['productId'] as String?;
+        if (key == null) continue;
+        list.add(Product(
+          productId: key,
+          shopId: (data['shopId'] as String?) ?? shopId,
+          sku: (data['sku'] as String?) ?? '',
+          productName: (data['productName'] as String?) ?? (data['name'] as String?) ?? '',
+          category: (data['category'] as String?) ?? (data['cat'] as String?) ?? 'Spare Parts',
+          brand: (data['brand'] as String?) ?? '',
+          description: (data['description'] as String?) ?? '',
+          supplierName: (data['supplierName'] as String?) ?? (data['supplier'] as String?) ?? '',
+          costPrice: (data['costPrice'] as num?)?.toDouble() ?? (data['cost'] as num?)?.toDouble() ?? 0,
+          sellingPrice: (data['sellingPrice'] as num?)?.toDouble() ?? (data['price'] as num?)?.toDouble() ?? 0,
+          stockQty: (data['stockQty'] as int?) ?? (data['qty'] as int?) ?? 0,
+          reorderLevel: (data['reorderLevel'] as int?) ?? (data['reorder'] as int?) ?? 5,
+          isActive: (data['isActive'] as bool?) ?? true,
+          imageUrl: (data['imageUrl'] as String?) ?? '',
+          createdAt: (data['createdAt'] as String?) ?? '',
+          updatedAt: (data['updatedAt'] as String?) ?? '',
+        ));
       }
       ref.read(productsProvider.notifier).setAll(list);
     } catch (_) {}
@@ -68,7 +63,10 @@ class _InvState extends ConsumerState<InventoryScreen> {
     final session = sessionAsync.asData?.value;
     if (!_synced && !_syncing && session != null && session.shopId.isNotEmpty) {
       _syncing = true;
-      _syncProductsFromFirebase(session.shopId).whenComplete(() {
+      Future.wait([
+        _syncProductsFromSupabase(session.shopId),
+        ref.read(transactionsProvider.notifier).loadFromSupabase(session.shopId),
+      ]).whenComplete(() {
         if (mounted) {
           setState(() {
             _synced = true;
@@ -115,7 +113,7 @@ class _InvState extends ConsumerState<InventoryScreen> {
             // Search
             TextField(
               onChanged: (v) => ref.read(searchInvProvider.notifier).state = v,
-              style: GoogleFonts.syne(fontSize: 13, color: C.text),
+              style: GoogleFonts.inter(fontSize: 13, color: C.text),
               decoration: const InputDecoration(
                 hintText: 'Search name, SKU, brand...',
                 prefixIcon: Icon(Icons.search, color: C.textMuted, size: 20),
@@ -139,7 +137,7 @@ class _InvState extends ConsumerState<InventoryScreen> {
                         borderRadius: BorderRadius.circular(99),
                         border: Border.all(color: sel ? C.primary : C.border),
                       ),
-                      child: Text(cat, style: GoogleFonts.syne(fontSize: 12,
+                      child: Text(cat, style: GoogleFonts.inter(fontSize: 12,
                           fontWeight: FontWeight.w700,
                           color: sel ? C.primary : C.textMuted)),
                     ),
@@ -155,7 +153,7 @@ class _InvState extends ConsumerState<InventoryScreen> {
               ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                   const Text('📦', style: TextStyle(fontSize: 48)),
                   const SizedBox(height: 12),
-                  Text('No products found', style: GoogleFonts.syne(
+                  Text('No products found', style: GoogleFonts.inter(
                       fontSize: 16, fontWeight: FontWeight.w700, color: C.textMuted)),
                 ]))
               : ListView.builder(
@@ -187,17 +185,17 @@ class _InvState extends ConsumerState<InventoryScreen> {
                           ),
                           const SizedBox(width: 12),
                           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text(p.productName, style: GoogleFonts.syne(
+                            Text(p.productName, style: GoogleFonts.inter(
                                 fontWeight: FontWeight.w700, fontSize: 13, color: C.white),
                                 overflow: TextOverflow.ellipsis),
                             Text('${p.sku}${p.brand.isNotEmpty ? " · ${p.brand}" : ""}',
-                                style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
+                                style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
                             const SizedBox(height: 4),
                             Row(children: [
-                              Text(fmtMoney(p.sellingPrice), style: GoogleFonts.syne(
+                              Text(fmtMoney(p.sellingPrice), style: GoogleFonts.plusJakartaSans(
                                   fontWeight: FontWeight.w800, fontSize: 14, color: C.primary)),
                               const SizedBox(width: 8),
-                              Text('Cost: ${fmtMoney(p.costPrice)}', style: GoogleFonts.syne(
+                              Text('Cost: ${fmtMoney(p.costPrice)}', style: GoogleFonts.inter(
                                   fontSize: 11, color: C.textMuted)),
                             ]),
                           ])),
@@ -209,18 +207,18 @@ class _InvState extends ConsumerState<InventoryScreen> {
                                   color: sc.withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(8)),
                               child: Text(p.isOutOfStock ? 'OUT' : '${p.stockQty} pcs',
-                                  style: GoogleFonts.syne(fontSize: 12,
+                                  style: GoogleFonts.inter(fontSize: 12,
                                       fontWeight: FontWeight.w700, color: sc)),
                             ),
                             const SizedBox(height: 4),
-                            Text('Min: ${p.reorderLevel}', style: GoogleFonts.syne(
+                            Text('Min: ${p.reorderLevel}', style: GoogleFonts.inter(
                                 fontSize: 10, color: C.textMuted)),
                             const SizedBox(height: 4),
                             // Quick stock adjust
                             Row(children: [
                               _qtyBtn(Icons.remove, () => _adjustQty(p, -1)),
                               Padding(padding: const EdgeInsets.symmetric(horizontal: 8),
-                                  child: Text('${p.stockQty}', style: GoogleFonts.syne(
+                                  child: Text('${p.stockQty}', style: GoogleFonts.inter(
                                       fontSize: 12, fontWeight: FontWeight.w700, color: C.white))),
                               _qtyBtn(Icons.add, () => _adjustQty(p, 1)),
                             ]),
@@ -238,7 +236,7 @@ class _InvState extends ConsumerState<InventoryScreen> {
         backgroundColor: C.primary,
         foregroundColor: C.bg,
         icon: const Icon(Icons.add),
-        label: Text('Add Product', style: GoogleFonts.syne(fontWeight: FontWeight.w800)),
+        label: Text('Add Product', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
       ),
     );
   }
@@ -249,7 +247,7 @@ class _InvState extends ConsumerState<InventoryScreen> {
         color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(99),
         border: Border.all(color: color.withValues(alpha: 0.3))),
-    child: Text(label, style: GoogleFonts.syne(
+    child: Text(label, style: GoogleFonts.inter(
         fontSize: 12, fontWeight: FontWeight.w700, color: color)),
   );
 
@@ -291,33 +289,30 @@ class _InvState extends ConsumerState<InventoryScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Stock History', style: GoogleFonts.syne(fontSize: 18, fontWeight: FontWeight.w800, color: C.white)),
-                        Text(p.productName, style: GoogleFonts.syne(fontSize: 12, color: C.primary)),
+                        Text('Stock History', style: GoogleFonts.plusJakartaSans(fontSize: 18, fontWeight: FontWeight.w800, color: C.white)),
+                        Text(p.productName, style: GoogleFonts.inter(fontSize: 12, color: C.primary)),
                       ],
                     ),
                   ),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(color: C.bgCard, borderRadius: BorderRadius.circular(8), border: Border.all(color: C.border)),
-                    child: Text('${p.stockQty} current', style: GoogleFonts.syne(fontSize: 12, fontWeight: FontWeight.w700, color: C.white)),
+                    child: Text('${p.stockQty} current', style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700, color: C.white)),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 20),
             Expanded(
-              child: StreamBuilder<DatabaseEvent>(
-                stream: FirebaseDatabase.instance.ref('stock_history')
-                    .orderByChild('productId')
-                    .equalTo(p.productId)
-                    .onValue,
+              child: FutureBuilder<List<Map<String, dynamic>>>(
+                future: _fetchStockHistory(p.productId),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                  if (!snapshot.hasData || snapshot.data?.snapshot.value == null) {
-                    return Center(child: Text('No history found', style: GoogleFonts.syne(color: C.textMuted)));
+                  if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                    return Center(child: Text('No history found', style: GoogleFonts.inter(color: C.textMuted)));
                   }
                   
-                  final data = snapshot.data!.snapshot.children.map((c) => Map<String, dynamic>.from(c.value as Map)).toList();
+                  final data = snapshot.data!;
                   data.sort((a, b) => (b['time'] as int).compareTo(a['time'] as int));
 
                   return ListView.builder(
@@ -355,15 +350,15 @@ class _InvState extends ConsumerState<InventoryScreen> {
                                 children: [
                                   Text(
                                     type.toUpperCase(),
-                                    style: GoogleFonts.syne(fontSize: 10, fontWeight: FontWeight.w800, color: isPositive ? C.green : C.red, letterSpacing: 0.5),
+                                    style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.w800, color: isPositive ? C.green : C.red, letterSpacing: 0.5),
                                   ),
                                   Text(
                                     'By ${h['by'] ?? "Unknown"}',
-                                    style: GoogleFonts.syne(fontSize: 12, fontWeight: FontWeight.w600, color: C.white),
+                                    style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600, color: C.white),
                                   ),
                                   Text(
                                     '${date.day}/${date.month} ${date.hour}:${date.minute}',
-                                    style: GoogleFonts.syne(fontSize: 10, color: C.textMuted),
+                                    style: GoogleFonts.inter(fontSize: 10, color: C.textMuted),
                                   ),
                                 ],
                               ),
@@ -373,11 +368,11 @@ class _InvState extends ConsumerState<InventoryScreen> {
                               children: [
                                 Text(
                                   '${isPositive ? "+" : ""}$delta',
-                                  style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w800, color: isPositive ? C.green : C.red),
+                                  style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.w800, color: isPositive ? C.green : C.red),
                                 ),
                                 Text(
                                   '${h['newQty']} total',
-                                  style: GoogleFonts.syne(fontSize: 10, color: C.textMuted),
+                                  style: GoogleFonts.inter(fontSize: 10, color: C.textMuted),
                                 ),
                               ],
                             ),
@@ -395,38 +390,53 @@ class _InvState extends ConsumerState<InventoryScreen> {
     );
   }
 
+  Future<List<Map<String, dynamic>>> _fetchStockHistory(String productId) async {
+    try {
+      final response = await SupabaseService.instance.client
+          .from('stock_history')
+          .select()
+          .eq('productId', productId);
+      return List<Map<String, dynamic>>.from(response);
+    } catch (_) {
+      return [];
+    }
+  }
+
   Future<void> _adjustQty(Product p, int delta) async {
     final notifier = ref.read(productsProvider.notifier);
     notifier.adjustQty(p.productId, delta);
     try {
       final session = ref.read(currentUserProvider).asData?.value;
       final shopId = session?.shopId ?? '';
-      final db = FirebaseDatabase.instance;
       final newQty = (p.stockQty + delta).clamp(0, 99999);
       final now = DateTime.now().millisecondsSinceEpoch;
       
-      final batch = <String, dynamic>{};
-      batch['products/${p.productId}/stockQty'] = newQty;
-      batch['products/${p.productId}/updatedAt'] = DateTime.now().toIso8601String();
+      // Update product
+      await SupabaseService.instance.client
+          .from('products')
+          .update({
+            'stockQty': newQty,
+            'updatedAt': DateTime.now().toIso8601String(),
+          })
+          .eq('productId', p.productId);
       
       // Log stock history
       final histId = 'h_${now}_${p.productId}';
       
-      // For simplicity, we'll just update the specific fields in the product node
-      // and also keep the stock_history collection for the stream
-      batch['stock_history/$histId'] = {
-        'shopId': shopId,
-        'productId': p.productId,
-        'productName': p.productName,
-        'oldQty': p.stockQty,
-        'newQty': newQty,
-        'delta': delta,
-        'type': delta > 0 ? 'restock' : 'adjustment',
-        'time': now,
-        'by': session?.displayName ?? 'Admin',
-      };
-      
-      await db.ref().update(batch);
+      await SupabaseService.instance.client
+          .from('stock_history')
+          .insert({
+            'historyId': histId,
+            'shopId': shopId,
+            'productId': p.productId,
+            'productName': p.productName,
+            'oldQty': p.stockQty,
+            'newQty': newQty,
+            'delta': delta,
+            'type': delta > 0 ? 'restock' : 'adjustment',
+            'time': now,
+            'by': session?.displayName ?? 'Admin',
+          });
     } catch (_) {}
   }
 }
@@ -503,7 +513,7 @@ class _ProdFormState extends ConsumerState<ProductFormScreen> {
             const Text('✅ ', style: TextStyle(fontSize: 16)),
             Expanded(child: Text(
               'Found: ${info.name.isNotEmpty ? info.name : result.barcode}',
-              style: GoogleFonts.syne(fontWeight: FontWeight.w700),
+              style: GoogleFonts.inter(fontWeight: FontWeight.w700),
               overflow: TextOverflow.ellipsis,
             )),
           ]),
@@ -518,7 +528,7 @@ class _ProdFormState extends ConsumerState<ProductFormScreen> {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(
             '📦 Barcode ${result.barcode} scanned — fill details manually',
-            style: GoogleFonts.syne(fontWeight: FontWeight.w700),
+            style: GoogleFonts.inter(fontWeight: FontWeight.w700),
           ),
           backgroundColor: C.bgElevated,
           behavior: SnackBarBehavior.floating,
@@ -571,35 +581,65 @@ class _ProdFormState extends ConsumerState<ProductFormScreen> {
     );
 
     try {
-      final db = FirebaseDatabase.instance;
-      await db.ref('products/$id').set({
-        'productId': product.productId,
-        'shopId': product.shopId,
-        'sku': product.sku,
-        'productName': product.productName,
-        'category': product.category,
-        'brand': product.brand,
-        'description': product.description,
-        'supplierName': product.supplierName,
-        'costPrice': product.costPrice,
-        'sellingPrice': product.sellingPrice,
-        'stockQty': product.stockQty,
-        'reorderLevel': product.reorderLevel,
-        'isActive': product.isActive,
-        'imageUrl': product.imageUrl,
-        'createdAt': product.createdAt,
-        'updatedAt': product.updatedAt,
-      });
+      if (_isEdit) {
+        await SupabaseService.instance.client
+            .from('products')
+            .update({
+              'sku': product.sku,
+              'productName': product.productName,
+              'category': product.category,
+              'brand': product.brand,
+              'description': product.description,
+              'supplierName': product.supplierName,
+              'costPrice': product.costPrice,
+              'sellingPrice': product.sellingPrice,
+              'stockQty': product.stockQty,
+              'reorderLevel': product.reorderLevel,
+              'isActive': product.isActive,
+              'imageUrl': product.imageUrl,
+              'updatedAt': product.updatedAt,
+            })
+            .eq('productId', id);
+      } else {
+        await SupabaseService.instance.client
+            .from('products')
+            .insert({
+              'productId': product.productId,
+              'shopId': product.shopId,
+              'sku': product.sku,
+              'productName': product.productName,
+              'category': product.category,
+              'brand': product.brand,
+              'description': product.description,
+              'supplierName': product.supplierName,
+              'costPrice': product.costPrice,
+              'sellingPrice': product.sellingPrice,
+              'stockQty': product.stockQty,
+              'reorderLevel': product.reorderLevel,
+              'isActive': product.isActive,
+              'imageUrl': product.imageUrl,
+              'createdAt': product.createdAt,
+              'updatedAt': product.updatedAt,
+            });
+      }
+
+      if (_isEdit) {
+        notifier.update(product);
+      } else {
+        notifier.add(product);
+      }
+
       if (mounted) {
         nav.pop();
         messenger.showSnackBar(SnackBar(
           content: Text(_isEdit ? 'Product updated!' : 'Product added!',
-              style: GoogleFonts.syne(fontWeight: FontWeight.w700)),
+              style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
           backgroundColor: C.green, behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ));
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Error saving product: $e');
       if (_isEdit) {
         notifier.update(product);
       } else {
@@ -618,20 +658,24 @@ class _ProdFormState extends ConsumerState<ProductFormScreen> {
       builder: (ctx) => AlertDialog(
         backgroundColor: C.bgCard,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('Delete Product?', style: GoogleFonts.syne(
+        title: Text('Delete Product?', style: GoogleFonts.plusJakartaSans(
             fontWeight: FontWeight.w800, color: C.white)),
         content: Text('Remove "${widget.product!.productName}" from inventory?',
-            style: GoogleFonts.syne(fontSize: 13, color: C.textMuted)),
+            style: GoogleFonts.inter(fontSize: 13, color: C.textMuted)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx),
-              child: Text('Cancel', style: GoogleFonts.syne(color: C.textMuted))),
+              child: Text('Cancel', style: GoogleFonts.inter(color: C.textMuted))),
           ElevatedButton(
             onPressed: () async {
             final id = widget.product!.productId;
             try {
-              final db = FirebaseDatabase.instance;
-              await db.ref('products/$id').remove();
-            } catch (_) {}
+              await SupabaseService.instance.client
+                  .from('products')
+                  .delete()
+                  .eq('productId', id);
+            } catch (e) {
+              debugPrint('Error deleting product: $e');
+            }
             ref.read(productsProvider.notifier).delete(id);
              if (!context.mounted) return;
              Navigator.of(ctx).pop();
@@ -639,7 +683,7 @@ class _ProdFormState extends ConsumerState<ProductFormScreen> {
           },
             style: ElevatedButton.styleFrom(backgroundColor: C.red, foregroundColor: C.white,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-            child: Text('Delete', style: GoogleFonts.syne(fontWeight: FontWeight.w800)),
+            child: Text('Delete', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
           ),
         ],
       ),
@@ -659,11 +703,11 @@ class _ProdFormState extends ConsumerState<ProductFormScreen> {
       backgroundColor: C.bg,
       appBar: AppBar(
         title: Text(_isEdit ? 'Edit Product' : 'New Product',
-            style: GoogleFonts.syne(fontWeight: FontWeight.w800)),
+            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
         actions: [
           TextButton(
             onPressed: _save,
-            child: Text('Save', style: GoogleFonts.syne(
+            child: Text('Save', style: GoogleFonts.plusJakartaSans(
                 fontWeight: FontWeight.w800, fontSize: 15, color: C.primary)),
           ),
         ],
@@ -687,17 +731,17 @@ class _ProdFormState extends ConsumerState<ProductFormScreen> {
 
             // Category
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('CATEGORY', style: GoogleFonts.syne(fontSize: 10,
+              Text('CATEGORY', style: GoogleFonts.inter(fontSize: 10,
                   fontWeight: FontWeight.w700, color: C.textMuted, letterSpacing: 0.5)),
               const SizedBox(height: 5),
               DropdownButtonFormField<String>(
                 initialValue: _cat,
                 dropdownColor: C.bgElevated,
-                style: GoogleFonts.syne(fontSize: 13, color: C.text),
+                style: GoogleFonts.inter(fontSize: 13, color: C.text),
                 decoration: const InputDecoration(),
                 onChanged: (v) => setState(() => _cat = v ?? 'Spare Parts'),
                 items: _cats.map((c) => DropdownMenuItem(value: c,
-                    child: Text(c, style: GoogleFonts.syne(fontSize: 13)))).toList(),
+                    child: Text(c, style: GoogleFonts.inter(fontSize: 13)))).toList(),
               ),
               const SizedBox(height: 12),
             ]),
@@ -730,10 +774,10 @@ class _ProdFormState extends ConsumerState<ProductFormScreen> {
                   ),
                 ),
                 child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                  Text('Profit Margin', style: GoogleFonts.syne(
+                  Text('Profit Margin', style: GoogleFonts.inter(
                       fontSize: 13, color: C.textMuted)),
                   Text('${fmtMoney(margin)} (${marginPct.toStringAsFixed(1)}%)',
-                      style: GoogleFonts.syne(fontSize: 14, fontWeight: FontWeight.w800,
+                      style: GoogleFonts.plusJakartaSans(fontSize: 14, fontWeight: FontWeight.w800,
                           color: margin >= 0 ? C.green : C.red)),
                 ]),
               ),
@@ -760,7 +804,7 @@ class _ProdFormState extends ConsumerState<ProductFormScreen> {
                     color: color.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(color: color.withValues(alpha: 0.3))),
-                child: Text(label, style: GoogleFonts.syne(fontSize: 12, color: color)),
+                child: Text(label, style: GoogleFonts.inter(fontSize: 12, color: color)),
               );
             }),
             const SizedBox(height: 24),
@@ -785,20 +829,20 @@ class _ProdFormState extends ConsumerState<ProductFormScreen> {
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         RichText(text: TextSpan(
           text: label.toUpperCase(),
-          style: GoogleFonts.syne(fontSize: 10, fontWeight: FontWeight.w700,
+          style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w700,
               color: C.textMuted, letterSpacing: 0.5),
           children: required ? [TextSpan(text: ' *',
-              style: GoogleFonts.syne(color: C.accent))] : [],
+              style: GoogleFonts.inter(color: C.accent))] : [],
         )),
         const SizedBox(height: 5),
         TextFormField(
           controller: ctrl, keyboardType: type, maxLines: maxLines,
           onChanged: (v) { onChanged?.call(v); setState(() {}); },
-          style: GoogleFonts.syne(fontSize: 13, color: C.text),
+          style: GoogleFonts.inter(fontSize: 13, color: C.text),
           decoration: InputDecoration(
             hintText: hint, 
             prefixText: prefix,
-            prefixStyle: GoogleFonts.syne(color: C.textMuted, fontSize: 13),
+            prefixStyle: GoogleFonts.inter(color: C.textMuted, fontSize: 13),
             suffixIcon: suffix,
           ),
           validator: required
@@ -1045,7 +1089,7 @@ class _BarcodeScannerScreenState extends State<_BarcodeScannerScreen>
                       borderRadius: BorderRadius.circular(99),
                     ),
                     child: Text('Scan Barcode',
-                        style: GoogleFonts.syne(
+                        style: GoogleFonts.inter(
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
                             color: Colors.white)),
@@ -1089,7 +1133,7 @@ class _BarcodeScannerScreenState extends State<_BarcodeScannerScreen>
                 ),
                 child: Text(
                   'Align barcode within the frame',
-                  style: GoogleFonts.syne(
+                  style: GoogleFonts.inter(
                       fontSize: 12, color: Colors.white70),
                 ),
               ),
@@ -1107,13 +1151,13 @@ class _BarcodeScannerScreenState extends State<_BarcodeScannerScreen>
                     const CircularProgressIndicator(color: Colors.white),
                     const SizedBox(height: 16),
                     Text('Looking up product…',
-                        style: GoogleFonts.syne(
+                        style: GoogleFonts.inter(
                             fontSize: 15,
                             fontWeight: FontWeight.w700,
                             color: Colors.white)),
                     const SizedBox(height: 6),
                     Text(_lastBarcode ?? '',
-                        style: GoogleFonts.syne(
+                        style: GoogleFonts.inter(
                             fontSize: 12, color: Colors.white60)),
                   ],
                 ),
@@ -1141,7 +1185,7 @@ class _BarcodeScannerScreenState extends State<_BarcodeScannerScreen>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text('Can\'t scan? Enter manually',
-                        style: GoogleFonts.syne(
+                        style: GoogleFonts.inter(
                             fontSize: 12, color: Colors.white54)),
                     const SizedBox(height: 10),
                     GestureDetector(
@@ -1156,7 +1200,7 @@ class _BarcodeScannerScreenState extends State<_BarcodeScannerScreen>
                               color: Colors.white.withValues(alpha: 0.25)),
                         ),
                         child: Text('⌨️  Type Barcode / SKU',
-                            style: GoogleFonts.syne(
+                            style: GoogleFonts.inter(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w700,
                                 color: Colors.white)),
@@ -1179,23 +1223,23 @@ class _BarcodeScannerScreenState extends State<_BarcodeScannerScreen>
         backgroundColor: const Color(0xFF1E1E2E),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text('Enter Barcode / SKU',
-            style: GoogleFonts.syne(
+            style: GoogleFonts.plusJakartaSans(
                 fontWeight: FontWeight.w800, color: Colors.white)),
         content: TextField(
           controller: ctrl,
           autofocus: true,
           keyboardType: TextInputType.text,
-          style: GoogleFonts.syne(color: Colors.white),
+          style: GoogleFonts.inter(color: Colors.white),
           decoration: InputDecoration(
             hintText: 'e.g. 012345678905 or SCR-SAM-S24',
-            hintStyle: GoogleFonts.syne(color: Colors.white38),
+            hintStyle: GoogleFonts.inter(color: Colors.white38),
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: Text('Cancel',
-                style: GoogleFonts.syne(color: Colors.white54)),
+                style: GoogleFonts.inter(color: Colors.white54)),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
@@ -1205,7 +1249,7 @@ class _BarcodeScannerScreenState extends State<_BarcodeScannerScreen>
                   borderRadius: BorderRadius.circular(10)),
             ),
             child: Text('Look Up',
-                style: GoogleFonts.syne(
+                style: GoogleFonts.plusJakartaSans(
                     fontWeight: FontWeight.w800, color: Colors.black)),
           ),
         ],

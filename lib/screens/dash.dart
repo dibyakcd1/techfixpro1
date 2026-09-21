@@ -26,9 +26,9 @@ class DashScreen extends ConsumerWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Switch Staff Member', style: GoogleFonts.syne(fontSize: 18, fontWeight: FontWeight.w800, color: C.white)),
+            Text('Switch Staff Member', style: GoogleFonts.plusJakartaSans(fontSize: 18, fontWeight: FontWeight.w800, color: C.white)),
             const SizedBox(height: 8),
-            Text('Select a staff member to switch account', style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+            Text('Select a staff member to switch account', style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
             const SizedBox(height: 20),
             SizedBox(
               height: 120,
@@ -48,12 +48,12 @@ class DashScreen extends ConsumerWidget {
                           CircleAvatar(
                             radius: 28,
                             backgroundColor: C.primary.withValues(alpha: 0.15),
-                            child: Text(t.name[0], style: GoogleFonts.syne(fontWeight: FontWeight.w800, color: C.primary)),
+                            child: Text(t.name[0], style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, color: C.primary)),
                           ),
                           const SizedBox(height: 8),
                           Text(t.name.split(' ')[0], 
                             textAlign: TextAlign.center,
-                            style: GoogleFonts.syne(fontSize: 11, fontWeight: FontWeight.w600, color: C.white),
+                            style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: C.white),
                             maxLines: 1, overflow: TextOverflow.ellipsis),
                         ],
                       ),
@@ -76,7 +76,7 @@ class DashScreen extends ConsumerWidget {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: C.bgCard,
-        title: Text('Enter PIN for ${tech.name}', style: GoogleFonts.syne(fontSize: 16, fontWeight: FontWeight.w800)),
+        title: Text('Enter PIN for ${tech.name}', style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.w800)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -87,7 +87,7 @@ class DashScreen extends ConsumerWidget {
               obscureText: true,
               textAlign: TextAlign.center,
               maxLength: 4,
-              style: GoogleFonts.syne(fontSize: 24, letterSpacing: 12, fontWeight: FontWeight.w800, color: C.primary),
+              style: GoogleFonts.plusJakartaSans(fontSize: 24, letterSpacing: 12, fontWeight: FontWeight.w800, color: C.primary),
               decoration: const InputDecoration(counterText: '', hintText: '••••'),
             ),
           ],
@@ -196,8 +196,8 @@ class DashScreen extends ConsumerWidget {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Good morning, $ownerName 👋', style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
-                      Text(shopName, style: GoogleFonts.syne(fontSize: 18, fontWeight: FontWeight.w800, color: C.white)),
+                      Text('Good morning, $ownerName 👋', style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
+                      Text(shopName, style: GoogleFonts.plusJakartaSans(fontSize: 18, fontWeight: FontWeight.w800, color: C.white)),
                     ],
                   ),
                   const Spacer(),
@@ -214,7 +214,7 @@ class DashScreen extends ConsumerWidget {
                         children: [
                           const Icon(Icons.swap_horiz, size: 16, color: C.primary),
                           const SizedBox(width: 4),
-                          Text('Switch', style: GoogleFonts.syne(fontSize: 11, fontWeight: FontWeight.w700, color: C.primary)),
+                          Text('Switch', style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w700, color: C.primary)),
                         ],
                       ),
                     ),
@@ -268,12 +268,12 @@ class DashScreen extends ConsumerWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Low Stock Alert', style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 14, color: C.white)),
-                              Text('${lowStock.length} items are below reorder level', style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+                              Text('Low Stock Alert', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 14, color: C.white)),
+                              Text('${lowStock.length} items are below reorder level', style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
                             ],
                           ),
                         ),
-                        Text('View All →', style: GoogleFonts.syne(fontSize: 12, fontWeight: FontWeight.w700, color: C.yellow)),
+                        Text('View All →', style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700, color: C.yellow)),
                       ],
                     ),
                   ),
@@ -284,7 +284,7 @@ class DashScreen extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('📈 Revenue This Week', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
+                    Text('📈 Revenue This Week', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
                     const SizedBox(height: 16),
                     SizedBox(
                       height: 140,
@@ -304,7 +304,7 @@ class DashScreen extends ConsumerWidget {
                                   if (i < 0 || i >= days.length) return const SizedBox.shrink();
                                   return Padding(
                                     padding: const EdgeInsets.only(top: 4),
-                                    child: Text(days[i], style: GoogleFonts.syne(fontSize: 10, color: C.textMuted)),
+                                    child: Text(days[i], style: GoogleFonts.inter(fontSize: 10, color: C.textMuted)),
                                   );
                                 },
                               ),
@@ -373,8 +373,8 @@ class DashScreen extends ConsumerWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('🎉 Ready for Pickup (${ready.length})', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.green)),
-                    GestureDetector(onTap: onRepairs, child: Text('View →', style: GoogleFonts.syne(fontSize: 13, fontWeight: FontWeight.w700, color: C.primary))),
+                    Text('🎉 Ready for Pickup (${ready.length})', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.green)),
+                    GestureDetector(onTap: onRepairs, child: Text('View →', style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w700, color: C.primary))),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -389,15 +389,15 @@ class DashScreen extends ConsumerWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('${job.brand} ${job.model}', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
-                              Text('${job.customerName} · ${job.customerPhone}', style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+                              Text('${job.brand} ${job.model}', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
+                              Text('${job.customerName} · ${job.customerPhone}', style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
                             ],
                           ),
                         ),
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            Text(fmtMoney(job.totalAmount), style: GoogleFonts.syne(fontWeight: FontWeight.w800, fontSize: 16, color: C.green)),
+                            Text(fmtMoney(job.totalAmount), style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 16, color: C.green)),
                             const SizedBox(height: 4),
                             Pill(job.notificationSent ? 'Notified ✓' : 'Not Notified',
                                 color: job.notificationSent ? C.green : C.yellow, small: true),
@@ -414,8 +414,8 @@ class DashScreen extends ConsumerWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('🔧 Active Jobs', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
-                  GestureDetector(onTap: onRepairs, child: Text('All →', style: GoogleFonts.syne(fontSize: 13, fontWeight: FontWeight.w700, color: C.primary))),
+                  Text('🔧 Active Jobs', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
+                  GestureDetector(onTap: onRepairs, child: Text('All →', style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w700, color: C.primary))),
                 ],
               ),
               const SizedBox(height: 8),
@@ -431,8 +431,8 @@ class DashScreen extends ConsumerWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('${job.brand} ${job.model}', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
-                            Text(job.customerName, style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+                            Text('${job.brand} ${job.model}', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
+                            Text(job.customerName, style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
                           ],
                         ),
                       ),
@@ -451,15 +451,15 @@ class DashScreen extends ConsumerWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('⚠️ Low Stock Alert', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.yellow)),
+                      Text('⚠️ Low Stock Alert', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.yellow)),
                       const SizedBox(height: 10),
                       ...lowStock.take(3).map((p) => Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Row(
                           children: [
-                            Expanded(child: Text(p.productName, style: GoogleFonts.syne(fontSize: 13, color: C.text), overflow: TextOverflow.ellipsis)),
+                            Expanded(child: Text(p.productName, style: GoogleFonts.inter(fontSize: 13, color: C.text), overflow: TextOverflow.ellipsis)),
                             Text(p.isOutOfStock ? 'OUT' : '${p.stockQty} left',
-                                style: GoogleFonts.syne(fontSize: 12, fontWeight: FontWeight.w700, color: p.isOutOfStock ? C.red : C.yellow)),
+                                style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700, color: p.isOutOfStock ? C.red : C.yellow)),
                           ],
                         ),
                       )),

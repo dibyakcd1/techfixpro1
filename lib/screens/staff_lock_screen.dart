@@ -4,14 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_database/firebase_database.dart';
 import '../data/providers.dart';
 import '../data/active_session.dart';
 import '../models/m.dart';
 import '../theme/t.dart';
 import '../widgets/w.dart';
 import 'auth_signup.dart';
+import '../services/supabase_service.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  StaffLockScreen
@@ -39,6 +38,8 @@ class _StaffLockScreenState extends ConsumerState<StaffLockScreen>
   int _attempts = 0;
   DateTime? _lockUntil;
   Timer? _lockTimer;
+  StreamSubscription? _staffSubscription;
+  String? _currentShopId;
 
   // Logo secret tap counter
   // Long-press the T logo (2 s) → hidden admin sheet
@@ -48,6 +49,36 @@ class _StaffLockScreenState extends ConsumerState<StaffLockScreen>
   late Animation<double> _shakeAnim;
   late AnimationController _fadeCtrl;
   late Animation<double> _fadeAnim;
+
+  Future<void> _loadStaffForShop(String shopId) async {
+    if (shopId == _currentShopId) return;
+    // Cancel old subscription
+    _staffSubscription?.cancel();
+    _currentShopId = shopId;
+    
+    debugPrint('DEBUG StaffLockScreen _loadStaffForShop: loading for shopId="$shopId"');
+    
+    // Load staff directly from Supabase
+    await ref.read(staffProvider.notifier).loadFromSupabase(shopId);
+    
+    // Set up real-time listener
+    _staffSubscription = SupabaseService.instance.client
+        .from('users')
+        .stream(primaryKey: ['uid'])
+        .eq('shopId', shopId)
+        .listen((event) {
+          debugPrint('DEBUG StaffLockScreen real-time listener got event: ${event.length} items');
+          final loaded = <StaffMember>[];
+          for (final data in event) {
+            final uid = data['uid'] as String?;
+            if (uid == null) continue;
+            final member = StaffMember.fromMap(uid, data);
+            debugPrint('DEBUG StaffLockScreen parsed staff: uid=${member.uid}, displayName=${member.displayName}, isOwner=${member.isOwner}, isActive=${member.isActive}');
+            loaded.add(member);
+          }
+          ref.read(staffProvider.notifier).setAll(loaded);
+        });
+  }
 
   @override
   void initState() {
@@ -67,14 +98,29 @@ class _StaffLockScreenState extends ConsumerState<StaffLockScreen>
     _fadeAnim = CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeOut);
 
     // FIX: Reload staff on mount so the lock screen always has data.
-    // loadFromFirebase in auth_login.dart may have run before the Firebase
-    // token was fully ready, leaving staffProvider empty. This ensures
-    // staff always appear even after app restarts or token refreshes.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (widget.ownerShopId.isNotEmpty) {
-        ref.read(staffProvider.notifier).reloadIfEmpty(widget.ownerShopId);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      debugPrint('DEBUG StaffLockScreen initState: widget.ownerUid="${widget.ownerUid}", widget.ownerShopId="${widget.ownerShopId}"');
+      // FIX: fall back to shopIdProvider when ownerShopId not yet set in widget.
+      // On first launch after login the _AuthGate may still be loading prefs.
+      final shopId = widget.ownerShopId.isNotEmpty
+          ? widget.ownerShopId
+          : ref.read(shopIdProvider);
+      if (shopId.isNotEmpty) {
+        await _loadStaffForShop(shopId);
+      } else {
+        debugPrint('DEBUG StaffLockScreen initState: shopId is empty!');
       }
     });
+  }
+
+  @override
+  void didUpdateWidget(StaffLockScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If ownerShopId changed, reload staff!
+    if (oldWidget.ownerShopId != widget.ownerShopId && widget.ownerShopId.isNotEmpty) {
+      debugPrint('DEBUG StaffLockScreen didUpdateWidget: ownerShopId changed from "${oldWidget.ownerShopId}" → "${widget.ownerShopId}"');
+      _loadStaffForShop(widget.ownerShopId);
+    }
   }
 
   @override
@@ -82,6 +128,7 @@ class _StaffLockScreenState extends ConsumerState<StaffLockScreen>
     _shakeCtrl.dispose();
     _fadeCtrl.dispose();
     _lockTimer?.cancel();
+    _staffSubscription?.cancel();
     super.dispose();
   }
 
@@ -120,10 +167,13 @@ class _StaffLockScreenState extends ConsumerState<StaffLockScreen>
 
     setState(() { _loading = true; _error = null; });
     try {
-      final snap = await FirebaseDatabase.instance
-          .ref('users/${staff.uid}/pin')
-          .get();
-      final realPin = snap.exists ? (snap.value as String? ?? '') : '';
+      final response = await SupabaseService.instance.client
+          .from('users')
+          .select('pin')
+          .eq('uid', staff.uid)
+          .maybeSingle();
+
+      final realPin = (response?['pin'] as String?) ?? '';
 
       if (realPin != _pin) {
         _attempts++;
@@ -200,7 +250,12 @@ class _StaffLockScreenState extends ConsumerState<StaffLockScreen>
   // ─────────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final staff = ref.watch(staffProvider)
+    final allStaff = ref.watch(staffProvider);
+    debugPrint('DEBUG StaffLockScreen build: allStaff.length=${allStaff.length}');
+    for (final s in allStaff) {
+      debugPrint('DEBUG StaffLockScreen build: staff member - uid=${s.uid}, displayName=${s.displayName}, isOwner=${s.isOwner}, isActive=${s.isActive}');
+    }
+    final staff = allStaff
         .where((s) => s.isActive && !s.isOwner)
         .toList();
     final locked =
@@ -213,18 +268,18 @@ class _StaffLockScreenState extends ConsumerState<StaffLockScreen>
           opacity: _fadeAnim,
           child: Column(
             children: [
-              // ── Top bar: clock | firebase dot | hidden logo ────────────
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    // Left: time display
-                    _LiveClock(),
-                    // Centre: Firebase connection status dot
-                    const _FirebaseDot(),
-                    // Right: Logo — secret 5-tap zone (NO visual hint to users)
-                    GestureDetector(
+            // ── Top bar: clock | supabase dot | hidden logo ────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Left: time display
+                  _LiveClock(),
+                  // Centre: Supabase status dot
+                  const _SupabaseDot(),
+                  // Right: Logo — secret 5-tap zone (NO visual hint to users)
+                  GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onLongPress: _onLogoLongPress,
                       child: Container(
@@ -238,7 +293,7 @@ class _StaffLockScreenState extends ConsumerState<StaffLockScreen>
                           borderRadius: BorderRadius.circular(11),
                         ),
                         child: Center(
-                          child: Text('T', style: GoogleFonts.syne(
+                          child: Text('T', style: GoogleFonts.plusJakartaSans(
                               fontWeight: FontWeight.w900,
                               fontSize: 18,
                               color: C.bg)),
@@ -259,7 +314,7 @@ class _StaffLockScreenState extends ConsumerState<StaffLockScreen>
                   children: [
                     Text(
                       _greeting(),
-                      style: GoogleFonts.syne(
+                      style: GoogleFonts.inter(
                           fontSize: 13, color: C.textMuted,
                           fontWeight: FontWeight.w600),
                     ),
@@ -268,7 +323,7 @@ class _StaffLockScreenState extends ConsumerState<StaffLockScreen>
                       _selected == null
                           ? "Who's working today?"
                           : 'Enter your PIN',
-                      style: GoogleFonts.syne(
+                      style: GoogleFonts.plusJakartaSans(
                           fontSize: 26, fontWeight: FontWeight.w800,
                           color: C.white, height: 1.1),
                     ),
@@ -355,12 +410,12 @@ class _LiveClockState extends State<_LiveClock> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        Text('$h:$m', style: GoogleFonts.syne(
+        Text('$h:$m', style: GoogleFonts.plusJakartaSans(
             fontSize: 22, fontWeight: FontWeight.w800, color: C.white)),
         const SizedBox(width: 4),
         Padding(
           padding: const EdgeInsets.only(bottom: 3),
-          child: Text(period, style: GoogleFonts.syne(
+          child: Text(period, style: GoogleFonts.inter(
               fontSize: 11, fontWeight: FontWeight.w700, color: C.textMuted)),
         ),
       ],
@@ -369,109 +424,52 @@ class _LiveClockState extends State<_LiveClock> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Firebase connection status dot
-//  • Grey pulse  = checking / waiting
-//  • Red solid   = not connected to Firebase (not authenticated)
-//  • Green solid = connected and authenticated
+//  Supabase connection status dot
+//  • Red solid   = not authenticated
+//  • Green solid = authenticated
 // ─────────────────────────────────────────────────────────────────────────────
-class _FirebaseDot extends StatefulWidget {
-  const _FirebaseDot();
+class _SupabaseDot extends ConsumerStatefulWidget {
+  const _SupabaseDot();
   @override
-  State<_FirebaseDot> createState() => _FirebaseDotState();
+  ConsumerState<_SupabaseDot> createState() => _SupabaseDotState();
 }
 
-class _FirebaseDotState extends State<_FirebaseDot>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _pulse;
-  late Animation<double> _pulseAnim;
-  bool _connected = false;
-  StreamSubscription<DatabaseEvent>? _sub;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulse = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    )..repeat(reverse: true);
-    _pulseAnim = Tween<double>(begin: 0.4, end: 1.0).animate(
-      CurvedAnimation(parent: _pulse, curve: Curves.easeInOut),
-    );
-    _listenToConnection();
-  }
-
-  void _listenToConnection() {
-    try {
-      _sub = FirebaseDatabase.instance
-          .ref('.info/connected')
-          .onValue
-          .listen((event) {
-        final isConnected = (event.snapshot.value as bool?) ?? false;
-        if (mounted) setState(() => _connected = isConnected);
-        if (isConnected) {
-          _pulse.stop();
-          _pulse.value = 1.0;
-        } else {
-          _pulse.repeat(reverse: true);
-        }
-      });
-    } catch (_) {}
-  }
-
-  @override
-  void dispose() {
-    _pulse.dispose();
-    _sub?.cancel();
-    super.dispose();
-  }
-
+class _SupabaseDotState extends ConsumerState<_SupabaseDot> {
   @override
   Widget build(BuildContext context) {
-    // Check Firebase Auth state as secondary signal
-    final firebaseUser = FirebaseAuth.instance.currentUser;
-    final isAuthed = firebaseUser != null && !firebaseUser.isAnonymous;
-    final isLive = _connected && isAuthed;
+    final user = SupabaseService.instance.client.auth.currentUser;
+    final isAuthed = user != null;
 
-    final color = isLive
-        ? const Color(0xFF22C55E)   // bright green — connected + authed
-        : _connected
-            ? const Color(0xFFF59E0B) // amber — DB reachable but not authed
-            : const Color(0xFFEF4444); // red — not connected
+    final color = isAuthed
+        ? const Color(0xFF22C55E)   // bright green
+        : const Color(0xFFEF4444); // red
 
-    final label = isLive
-        ? 'Connected'
-        : _connected ? 'Not signed in' : 'Offline';
+    final label = isAuthed ? 'Signed in' : 'Sign in';
 
     return Tooltip(
       message: label,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Outer glow ring (animated when not live)
-          AnimatedBuilder(
-            animation: _pulseAnim,
-            builder: (_, __) => Container(
-              width: 20, height: 20,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: color.withValues(
-                    alpha: isLive ? 0.15 : _pulseAnim.value * 0.2),
-              ),
-              child: Center(
-                child: Container(
-                  width: 10, height: 10,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: color.withValues(
-                        alpha: isLive ? 1.0 : _pulseAnim.value),
-                    boxShadow: isLive ? [
-                      BoxShadow(
-                        color: color.withValues(alpha: 0.5),
-                        blurRadius: 6,
-                        spreadRadius: 1,
-                      ),
-                    ] : null,
-                  ),
+          Container(
+            width: 20, height: 20,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color.withValues(alpha: 0.15),
+            ),
+            child: Center(
+              child: Container(
+                width: 10, height: 10,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: color,
+                  boxShadow: isAuthed ? [
+                    BoxShadow(
+                      color: color.withValues(alpha: 0.5),
+                      blurRadius: 6,
+                      spreadRadius: 1,
+                    ),
+                  ] : null,
                 ),
               ),
             ),
@@ -479,10 +477,10 @@ class _FirebaseDotState extends State<_FirebaseDot>
           const SizedBox(width: 5),
           Text(
             label,
-            style: GoogleFonts.syne(
+            style: GoogleFonts.inter(
               fontSize: 10,
               fontWeight: FontWeight.w600,
-              color: color.withValues(alpha: isLive ? 0.9 : 0.7),
+              color: color.withValues(alpha: 0.9),
             ),
           ),
         ],
@@ -515,7 +513,7 @@ class _StaffGrid extends StatelessWidget {
               // Subtle icon — not alarming, just informational
               Container(
                 width: 64, height: 64,
-                decoration: BoxDecoration(
+                decoration: const BoxDecoration(
                   color: C.bgCard,
                   shape: BoxShape.circle,
                 ),
@@ -525,15 +523,14 @@ class _StaffGrid extends StatelessWidget {
               const SizedBox(height: 18),
               Text(
                 'Ready to go',
-                style: GoogleFonts.syne(
+                style: GoogleFonts.plusJakartaSans(
                     fontSize: 17, fontWeight: FontWeight.w800, color: C.white),
               ),
               const SizedBox(height: 8),
               Text(
-                'Hold the logo for 2 seconds to access
-owner settings and add your team.',
+                'Hold the logo for 2 seconds to access\nowner settings and add your team.',
                 textAlign: TextAlign.center,
-                style: GoogleFonts.syne(
+                style: GoogleFonts.inter(
                     fontSize: 12, color: C.textMuted, height: 1.6),
               ),
             ],
@@ -629,7 +626,7 @@ class _StaffCardState extends State<_StaffCard>
                       color: color.withValues(alpha: 0.35), width: 1.5),
                 ),
                 child: Center(
-                  child: Text(initials, style: GoogleFonts.syne(
+                  child: Text(initials, style: GoogleFonts.plusJakartaSans(
                       fontSize: 18, fontWeight: FontWeight.w800, color: color)),
                 ),
               ),
@@ -639,7 +636,7 @@ class _StaffCardState extends State<_StaffCard>
                 padding: const EdgeInsets.symmetric(horizontal: 6),
                 child: Text(
                   widget.member.displayName.split(' ').first,
-                  style: GoogleFonts.syne(
+                  style: GoogleFonts.inter(
                       fontSize: 13, fontWeight: FontWeight.w700, color: C.white),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -656,7 +653,7 @@ class _StaffCardState extends State<_StaffCard>
                 ),
                 child: Text(
                   widget.member.roleLabel,
-                  style: GoogleFonts.syne(
+                  style: GoogleFonts.inter(
                       fontSize: 9, fontWeight: FontWeight.w700,
                       color: color.withValues(alpha: 0.85)),
                 ),
@@ -743,16 +740,16 @@ class _PinSection extends StatelessWidget {
                   border: Border.all(
                       color: color.withValues(alpha: 0.35), width: 1.5),
                 ),
-                child: Center(child: Text(initials, style: GoogleFonts.syne(
+                child: Center(child: Text(initials, style: GoogleFonts.plusJakartaSans(
                     fontSize: 15, fontWeight: FontWeight.w800, color: color))),
               ),
               const SizedBox(width: 12),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(staff.displayName, style: GoogleFonts.syne(
+                  Text(staff.displayName, style: GoogleFonts.plusJakartaSans(
                       fontSize: 15, fontWeight: FontWeight.w800, color: C.white)),
-                  Text(staff.roleLabel, style: GoogleFonts.syne(
+                  Text(staff.roleLabel, style: GoogleFonts.inter(
                       fontSize: 11, color: C.textMuted)),
                 ],
               ),
@@ -813,7 +810,7 @@ class _PinSection extends StatelessWidget {
               ? Text(
                   locked ? 'Locked · ${lockSecondsLeft}s remaining' : error!,
                   key: ValueKey(error),
-                  style: GoogleFonts.syne(
+                  style: GoogleFonts.inter(
                       fontSize: 13, color: C.red, fontWeight: FontWeight.w600),
                 )
               : loading
@@ -961,7 +958,7 @@ class _NumKeyState extends State<_NumKey>
                   )
                 : Text(
                     widget.label,
-                    style: GoogleFonts.syne(
+                    style: GoogleFonts.inter(
                       fontSize: 22, fontWeight: FontWeight.w700,
                       color: widget.locked
                           ? C.white.withValues(alpha: 0.2)
@@ -998,8 +995,6 @@ class _OwnerAccessSheet extends ConsumerStatefulWidget {
 }
 
 class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
-  // Auth mode: PIN only usable when ownerUid is known
-  bool get _canUsePin => widget.ownerUid.isNotEmpty;
   late bool _pinMode;
 
   // Controllers
@@ -1035,6 +1030,7 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
 
   // ── Verify owner identity ──────────────────────────────────────────────────
   Future<void> _verify() async {
+    debugPrint('DEBUG _OwnerAccessSheetState._verify: _pinMode=$_pinMode, widget.ownerUid="${widget.ownerUid}", _ownerPin="$_ownerPin"');
     setState(() { _loading = true; _error = null; });
     try {
       if (_pinMode) {
@@ -1043,10 +1039,14 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
           setState(() { _error = 'Enter your 4-digit PIN'; _loading = false; });
           return;
         }
-        final snap = await FirebaseDatabase.instance
-            .ref('users/${widget.ownerUid}/pin')
-            .get();
-        final real = snap.exists ? (snap.value as String? ?? '') : '';
+        final response = await SupabaseService.instance.client
+            .from('users')
+            .select('pin')
+            .eq('uid', widget.ownerUid)
+            .maybeSingle();
+        debugPrint('DEBUG _OwnerAccessSheetState._verify: response=$response');
+        final real = (response?['pin'] as String?) ?? '';
+        debugPrint('DEBUG _OwnerAccessSheetState._verify: realPin="$real", enteredPin="$_ownerPin"');
         if (real != _ownerPin) {
           HapticFeedback.heavyImpact();
           setState(() { _error = 'Incorrect PIN'; _ownerPin = ''; _loading = false; });
@@ -1058,27 +1058,29 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
           setState(() { _error = 'Enter email and password'; _loading = false; });
           return;
         }
-        final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
+        final authResponse = await SupabaseService.instance.client.auth.signInWithPassword(
           email: _emailCtrl.text.trim(),
           password: _passCtrl.text,
         );
         // If ownerUid was provided, verify it matches
-        if (widget.ownerUid.isNotEmpty && cred.user?.uid != widget.ownerUid) {
-          await FirebaseAuth.instance.signOut();
+        if (widget.ownerUid.isNotEmpty && authResponse.user?.id != widget.ownerUid) {
+          await SupabaseService.instance.client.auth.signOut();
           setState(() { _error = "Account does not match this shop's owner"; _loading = false; });
           return;
         }
         // Store resolved uid for data load below
-        _resolvedUid = cred.user!.uid;
+        _resolvedUid = authResponse.user!.id;
       }
 
       // Load owner data using resolved uid (may differ from widget.ownerUid if empty)
       final uid = _resolvedUid.isNotEmpty ? _resolvedUid : widget.ownerUid;
-      final snap = await FirebaseDatabase.instance
-          .ref('users/$uid')
-          .get();
-      final d = snap.exists && snap.value is Map
-          ? Map<String, dynamic>.from(snap.value as Map)
+      final response = await SupabaseService.instance.client
+          .from('users')
+          .select()
+          .eq('uid', uid)
+          .maybeSingle();
+      final d = response != null
+          ? Map<String, dynamic>.from(response)
           : <String, dynamic>{};
 
       // Store shopId for use in Enter App action
@@ -1154,11 +1156,11 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Owner Access', style: GoogleFonts.syne(
+                        Text('Owner Access', style: GoogleFonts.plusJakartaSans(
                             fontSize: 16, fontWeight: FontWeight.w800,
                             color: C.white)),
                         Text('Verify your identity to continue',
-                            style: GoogleFonts.syne(
+                            style: GoogleFonts.inter(
                                 fontSize: 11, color: C.textMuted)),
                       ],
                     ),
@@ -1218,7 +1220,7 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
 
         if (_pinMode) ...[
           // Owner PIN pad
-          Text('Enter owner PIN', style: GoogleFonts.syne(
+          Text('Enter owner PIN', style: GoogleFonts.inter(
               fontSize: 12, color: C.textMuted, fontWeight: FontWeight.w600)),
           const SizedBox(height: 16),
 
@@ -1251,7 +1253,7 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
 
           // Error or loading
           if (_error != null)
-            Center(child: Text(_error!, style: GoogleFonts.syne(
+            Center(child: Text(_error!, style: GoogleFonts.inter(
                 fontSize: 12, color: C.red, fontWeight: FontWeight.w600))),
           if (_loading)
             const Center(child: SizedBox(width: 18, height: 18,
@@ -1285,7 +1287,7 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
             ),
           ),
           if (_error != null) ...[
-            Text(_error!, style: GoogleFonts.syne(
+            Text(_error!, style: GoogleFonts.inter(
                 fontSize: 12, color: C.red, fontWeight: FontWeight.w600)),
             const SizedBox(height: 8),
           ],
@@ -1310,7 +1312,7 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap),
                 onPressed: _loading ? null : _sendResetEmail,
                 child: Text('Forgot password?',
-                    style: GoogleFonts.syne(
+                    style: GoogleFonts.inter(
                         fontSize: 11,
                         color: C.textMuted,
                         fontWeight: FontWeight.w600)),
@@ -1329,7 +1331,7 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
                   );
                 },
                 child: Text('Create account',
-                    style: GoogleFonts.syne(
+                    style: GoogleFonts.inter(
                         fontSize: 11,
                         color: C.textMuted,
                         fontWeight: FontWeight.w600)),
@@ -1350,7 +1352,7 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
       return;
     }
     try {
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      await SupabaseService.instance.client.auth.resetPasswordForEmail(email);
       if (!mounted) return;
       setState(() => _error = null);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -1358,7 +1360,7 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
         backgroundColor: C.bgElevated,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         content: Text('Reset link sent to $email',
-            style: GoogleFonts.syne(fontWeight: FontWeight.w600, color: C.white)),
+            style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: C.white)),
       ));
     } catch (e) {
       setState(() => _error = 'Could not send reset email');
@@ -1386,7 +1388,7 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
             const SizedBox(width: 10),
             Expanded(child: Text(
               'Verified · $_ownerName',
-              style: GoogleFonts.syne(
+              style: GoogleFonts.inter(
                   fontSize: 13, fontWeight: FontWeight.w700, color: C.green),
             )),
           ]),
@@ -1437,18 +1439,18 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
                     backgroundColor: C.bgCard,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16)),
-                    title: Text('Sign out?', style: GoogleFonts.syne(
+                    title: Text('Sign out?', style: GoogleFonts.plusJakartaSans(
                         fontWeight: FontWeight.w800, color: C.white)),
                     content: Text(
-                      'This disconnects the app from Firebase. '
+                      'This disconnects the app from Supabase. '
                       'Staff cannot use the app until you sign back in.',
-                      style: GoogleFonts.syne(
+                      style: GoogleFonts.inter(
                           fontSize: 13, color: C.textMuted, height: 1.5)),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.pop(context, false),
                         child: Text('Cancel',
-                            style: GoogleFonts.syne(color: C.textMuted)),
+                            style: GoogleFonts.inter(color: C.textMuted)),
                       ),
                       ElevatedButton(
                         onPressed: () => Navigator.pop(context, true),
@@ -1457,7 +1459,7 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10)),
                         ),
-                        child: Text('Sign Out', style: GoogleFonts.syne(
+                        child: Text('Sign Out', style: GoogleFonts.plusJakartaSans(
                             fontWeight: FontWeight.w800)),
                       ),
                     ],
@@ -1473,6 +1475,42 @@ class _OwnerAccessSheetState extends ConsumerState<_OwnerAccessSheet> {
         ),
         const SizedBox(height: 8),
       ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  _AdminAction — compact icon button with tooltip used in admin sheet
+// ─────────────────────────────────────────────────────────────────────────────
+class _AdminAction extends StatelessWidget {
+  final IconData  icon;
+  final Color     color;
+  final String    tooltip;
+  final VoidCallback onTap;
+
+  const _AdminAction({
+    required this.icon,
+    required this.color,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 52, height: 52,
+          decoration: BoxDecoration(
+            color: C.bgElevated,
+            shape: BoxShape.circle,
+            border: Border.all(color: C.border),
+          ),
+          child: Icon(icon, color: color, size: 22),
+        ),
+      ),
     );
   }
 }
@@ -1501,7 +1539,7 @@ class _StaffPinViewerState extends ConsumerState<_StaffPinViewer> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (widget.shopId.isNotEmpty) {
         setState(() => _loading = true);
-        await ref.read(staffProvider.notifier).loadFromFirebase(widget.shopId);
+        await ref.read(staffProvider.notifier).loadFromSupabase(widget.shopId);
         if (mounted) setState(() => _loading = false);
       }
     });
@@ -1580,11 +1618,11 @@ class _StaffPinViewerState extends ConsumerState<_StaffPinViewer> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Staff & PINs', style: GoogleFonts.syne(
+                        Text('Staff & PINs', style: GoogleFonts.plusJakartaSans(
                             fontSize: 16, fontWeight: FontWeight.w800,
                             color: C.white)),
                         Text('Tap any card to reveal PIN',
-                            style: GoogleFonts.syne(
+                            style: GoogleFonts.inter(
                                 fontSize: 11, color: C.textMuted)),
                       ],
                     ),
@@ -1599,7 +1637,7 @@ class _StaffPinViewerState extends ConsumerState<_StaffPinViewer> {
                     ),
                     child: Text(
                       '${staff.where((s) => s.isActive).length} active',
-                      style: GoogleFonts.syne(
+                      style: GoogleFonts.inter(
                           fontSize: 11, fontWeight: FontWeight.w700,
                           color: C.primary),
                     ),
@@ -1631,7 +1669,7 @@ class _StaffPinViewerState extends ConsumerState<_StaffPinViewer> {
                                   style: TextStyle(fontSize: 40)),
                               const SizedBox(height: 12),
                               Text('No staff added yet',
-                                  style: GoogleFonts.syne(
+                                  style: GoogleFonts.inter(
                                       fontSize: 14, color: C.textMuted)),
                             ],
                           ),
@@ -1685,7 +1723,7 @@ class _StaffPinViewerState extends ConsumerState<_StaffPinViewer> {
                                           s.displayName.isNotEmpty
                                               ? s.displayName[0].toUpperCase()
                                               : '?',
-                                          style: GoogleFonts.syne(
+                                          style: GoogleFonts.plusJakartaSans(
                                             fontSize: 18,
                                             fontWeight: FontWeight.w800,
                                             color: color,
@@ -1705,7 +1743,7 @@ class _StaffPinViewerState extends ConsumerState<_StaffPinViewer> {
                                             Flexible(
                                               child: Text(
                                                 s.displayName,
-                                                style: GoogleFonts.syne(
+                                                style: GoogleFonts.inter(
                                                   fontSize: 14,
                                                   fontWeight: FontWeight.w700,
                                                   color: s.isActive
@@ -1732,7 +1770,7 @@ class _StaffPinViewerState extends ConsumerState<_StaffPinViewer> {
                                           Row(children: [
                                             Text(
                                               '${_roleEmoji(s.role)}  ${s.roleLabel}',
-                                              style: GoogleFonts.syne(
+                                              style: GoogleFonts.inter(
                                                 fontSize: 11,
                                                 color: color,
                                                 fontWeight: FontWeight.w600,
@@ -1741,11 +1779,11 @@ class _StaffPinViewerState extends ConsumerState<_StaffPinViewer> {
                                             if (s.specialization.isNotEmpty &&
                                                 s.specialization != 'General') ...[
                                               Text('  ·  ',
-                                                  style: GoogleFonts.syne(
+                                                  style: GoogleFonts.inter(
                                                       fontSize: 11,
                                                       color: C.textDim)),
                                               Text(s.specialization,
-                                                  style: GoogleFonts.syne(
+                                                  style: GoogleFonts.inter(
                                                       fontSize: 11,
                                                       color: C.textDim)),
                                             ],
@@ -1779,7 +1817,7 @@ class _StaffPinViewerState extends ConsumerState<_StaffPinViewer> {
                                                 s.pin.isEmpty
                                                     ? 'No PIN'
                                                     : s.pin,
-                                                style: GoogleFonts.syne(
+                                                style: GoogleFonts.plusJakartaSans(
                                                   fontSize: 16,
                                                   fontWeight: FontWeight.w900,
                                                   color: color,
@@ -1802,7 +1840,7 @@ class _StaffPinViewerState extends ConsumerState<_StaffPinViewer> {
                                               ),
                                               child: Text(
                                                 '••••',
-                                                style: GoogleFonts.syne(
+                                                style: GoogleFonts.inter(
                                                   fontSize: 14,
                                                   color: C.textMuted,
                                                   letterSpacing: 4,
@@ -1860,7 +1898,7 @@ class _ModeChip extends StatelessWidget {
           Icon(icon, size: 14,
               color: selected ? C.primary : C.textMuted),
           const SizedBox(width: 6),
-          Text(label, style: GoogleFonts.syne(
+          Text(label, style: GoogleFonts.inter(
               fontSize: 12, fontWeight: FontWeight.w700,
               color: selected ? C.primary : C.textMuted)),
         ]),

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../data/providers.dart';
 import '../models/m.dart';
@@ -8,6 +7,7 @@ import '../theme/t.dart';
 import '../widgets/w.dart';
 import 'cust_form.dart';
 import 'add_repair.dart';
+import '../services/supabase_service.dart';
 
 class CustomersScreen extends ConsumerStatefulWidget {
   const CustomersScreen({super.key});
@@ -21,37 +21,32 @@ class _CustState extends ConsumerState<CustomersScreen> {
   bool _syncing = false;
   String? _syncError;
 
-  Future<void> _syncFromFirebase(String shopId) async {
+  Future<void> _syncFromSupabase(String shopId) async {
     try {
-      final db = FirebaseDatabase.instance;
-      final snap = await db.ref('customers')
-          .orderByChild('shopId')
-          .equalTo(shopId)
-          .get();
+      final response = await SupabaseService.instance.client
+          .from('customers')
+          .select()
+          .eq('shopId', shopId);
       final list = <Customer>[];
-      if (snap.exists && snap.children.isNotEmpty) {
-        for (final child in snap.children) {
-          final key = child.key;
-          final value = child.value;
-          if (key == null || value is! Map) continue;
-          final data = Map<String, dynamic>.from(value);
-          list.add(Customer(
-            customerId: key,
-            name: (data['name'] as String?) ?? '',
-            phone: (data['phone'] as String?) ?? '',
-            email: (data['email'] as String?) ?? '',
-            address: (data['address'] as String?) ?? '',
-            tier: (data['tier'] as String?) ?? 'Bronze',
-            points: (data['points'] as int?) ?? 0,
-            repairsCount: (data['repairsCount'] as int?) ?? 0,
-            totalSpend: (data['totalSpend'] as num?)?.toDouble() ?? 0,
-            isVip: (data['isVip'] as bool?) ?? false,
-            isBlacklisted: (data['isBlacklisted'] as bool?) ?? false,
-            shopId: (data['shopId'] as String?) ?? shopId,
-            createdAt: (data['createdAt'] as String?) ?? DateTime.now().toIso8601String(),
-            updatedAt: (data['updatedAt'] as String?) ?? DateTime.now().toIso8601String(),
-          ));
-        }
+      for (final data in response) {
+        final key = data['customerId'] as String?;
+        if (key == null) continue;
+        list.add(Customer(
+          customerId: key,
+          name: (data['name'] as String?) ?? '',
+          phone: (data['phone'] as String?) ?? '',
+          email: (data['email'] as String?) ?? '',
+          address: (data['address'] as String?) ?? '',
+          tier: (data['tier'] as String?) ?? 'Bronze',
+          points: (data['points'] as int?) ?? 0,
+          repairsCount: (data['repairsCount'] as int?) ?? 0,
+          totalSpend: (data['totalSpend'] as num?)?.toDouble() ?? 0,
+          isVip: (data['isVip'] as bool?) ?? false,
+          isBlacklisted: (data['isBlacklisted'] as bool?) ?? false,
+          shopId: (data['shopId'] as String?) ?? shopId,
+          createdAt: (data['createdAt'] as String?) ?? DateTime.now().toIso8601String(),
+          updatedAt: (data['updatedAt'] as String?) ?? DateTime.now().toIso8601String(),
+        ));
       }
       ref.read(customersProvider.notifier).setAll(list);
       if (mounted) {
@@ -79,7 +74,7 @@ class _CustState extends ConsumerState<CustomersScreen> {
 
     if (!_synced && !_syncing && session != null && session.shopId.isNotEmpty) {
       _syncing = true;
-      _syncFromFirebase(session.shopId).whenComplete(() {
+      _syncFromSupabase(session.shopId).whenComplete(() {
         if (mounted) {
           setState(() {
             _synced = true;
@@ -115,7 +110,7 @@ class _CustState extends ConsumerState<CustomersScreen> {
             Row(children: [
               Expanded(child: TextField(
                 onChanged: (v) => ref.read(searchCustProvider.notifier).state = v,
-                style: GoogleFonts.syne(fontSize: 13, color: C.text),
+                style: GoogleFonts.inter(fontSize: 13, color: C.text),
                 decoration: const InputDecoration(
                   hintText: 'Search name, phone, email...',
                   prefixIcon: Icon(Icons.search, color: C.textMuted, size: 20),
@@ -138,21 +133,21 @@ class _CustState extends ConsumerState<CustomersScreen> {
                     Icon(Icons.filter_list, size: 16,
                         color: _tierFilter != null ? C.primary : C.textMuted),
                     const SizedBox(width: 4),
-                    Text(_tierFilter ?? 'Tier', style: GoogleFonts.syne(fontSize: 12,
+                    Text(_tierFilter ?? 'Tier', style: GoogleFonts.inter(fontSize: 12,
                         color: _tierFilter != null ? C.primary : C.textMuted,
                         fontWeight: FontWeight.w700)),
                   ]),
                 ),
                 itemBuilder: (_) => [
                   PopupMenuItem(value: null, child: Text('All Tiers',
-                      style: GoogleFonts.syne(color: C.text))),
+                      style: GoogleFonts.inter(color: C.text))),
                   ...['Bronze', 'Silver', 'Gold', 'Platinum'].map((t) => PopupMenuItem(
                     value: t,
                     child: Row(children: [
                       Container(width: 10, height: 10, decoration: BoxDecoration(
                           color: C.tierColor(t), shape: BoxShape.circle)),
                       const SizedBox(width: 8),
-                      Text(t, style: GoogleFonts.syne(color: C.tierColor(t),
+                      Text(t, style: GoogleFonts.inter(color: C.tierColor(t),
                           fontWeight: FontWeight.w700)),
                     ]),
                   )),
@@ -162,7 +157,7 @@ class _CustState extends ConsumerState<CustomersScreen> {
             const SizedBox(height: 6),
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
               Text('${filtered.length} customer${filtered.length == 1 ? "" : "s"}',
-                  style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+                  style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(children: ['Gold', 'Platinum'].map((t) {
@@ -188,7 +183,7 @@ class _CustState extends ConsumerState<CustomersScreen> {
                       Expanded(
                         child: Text(
                           _syncError!,
-                          style: GoogleFonts.syne(
+                          style: GoogleFonts.inter(
                               fontSize: 11, color: C.red),
                         ),
                       ),
@@ -201,7 +196,7 @@ class _CustState extends ConsumerState<CustomersScreen> {
                           },
                           child: Text(
                             'Retry',
-                            style: GoogleFonts.syne(
+                            style: GoogleFonts.inter(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w700,
                                 color: C.red),
@@ -219,9 +214,10 @@ class _CustState extends ConsumerState<CustomersScreen> {
                     final shopId = session?.shopId ?? '';
                     if (shopId.isEmpty) return;
                     final messenger = ScaffoldMessenger.of(context);
-                    final db = FirebaseDatabase.instance;
+                    final supabase = SupabaseService.instance.client;
                     for (final c in customers) {
-                      await db.ref('customers/${c.customerId}').set({
+                      await supabase.from('customers').upsert({
+                        'customerId': c.customerId,
                         'name': c.name,
                         'phone': c.phone,
                         'email': c.email,
@@ -242,7 +238,7 @@ class _CustState extends ConsumerState<CustomersScreen> {
                         SnackBar(
                           content: Text(
                             'Customers migrated to cloud for $shopId',
-                            style: GoogleFonts.syne(
+                            style: GoogleFonts.inter(
                                 fontWeight: FontWeight.w700),
                           ),
                           backgroundColor: C.green,
@@ -259,7 +255,7 @@ class _CustState extends ConsumerState<CustomersScreen> {
                   },
                   child: Text(
                     'Migrate customers to cloud',
-                    style: GoogleFonts.syne(
+                    style: GoogleFonts.inter(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
                       color: C.primary,
@@ -275,7 +271,7 @@ class _CustState extends ConsumerState<CustomersScreen> {
               ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                   const Text('👤', style: TextStyle(fontSize: 48)),
                   const SizedBox(height: 12),
-                  Text('No customers found', style: GoogleFonts.syne(fontSize: 16,
+                  Text('No customers found', style: GoogleFonts.inter(fontSize: 16,
                       fontWeight: FontWeight.w700, color: C.textMuted)),
                   const SizedBox(height: 8),
                   PBtn(label: '+ Add Customer', onTap: () => _openForm(context),
@@ -297,7 +293,7 @@ class _CustState extends ConsumerState<CustomersScreen> {
                             CircleAvatar(
                               radius: 24,
                               backgroundColor: C.primary.withValues(alpha: 0.2),
-                              child: Text(c.name[0], style: GoogleFonts.syne(
+                              child: Text(c.name[0], style: GoogleFonts.plusJakartaSans(
                                   fontWeight: FontWeight.w800, color: C.primary, fontSize: 16)),
                             ),
                             if (c.isVip) const Positioned(bottom: -2, right: -4,
@@ -306,14 +302,14 @@ class _CustState extends ConsumerState<CustomersScreen> {
                           const SizedBox(width: 12),
                           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                             Row(children: [
-                              Expanded(child: Text(c.name, style: GoogleFonts.syne(
+                              Expanded(child: Text(c.name, style: GoogleFonts.inter(
                                   fontWeight: FontWeight.w700, fontSize: 15, color: C.white),
                                   overflow: TextOverflow.ellipsis)),
                               const SizedBox(width: 6),
                               Pill(c.tier, color: tc, small: true),
                             ]),
                             const SizedBox(height: 2),
-                            Text(c.phone, style: GoogleFonts.syne(fontSize: 13, color: C.textMuted)),
+                            Text(c.phone, style: GoogleFonts.inter(fontSize: 13, color: C.textMuted)),
                             const SizedBox(height: 6),
                             Row(children: [
                               _stat('🔧', '${custJobs.length} repairs'),
@@ -337,7 +333,7 @@ class _CustState extends ConsumerState<CustomersScreen> {
         backgroundColor: C.primary,
         foregroundColor: C.bg,
         icon: const Icon(Icons.person_add),
-        label: Text('Add Customer', style: GoogleFonts.syne(fontWeight: FontWeight.w800)),
+        label: Text('Add Customer', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
       ),
     );
   }
@@ -345,7 +341,7 @@ class _CustState extends ConsumerState<CustomersScreen> {
   Widget _stat(String icon, String val) => Row(children: [
     Text(icon, style: const TextStyle(fontSize: 12)),
     const SizedBox(width: 3),
-    Text(val, style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
+    Text(val, style: GoogleFonts.inter(fontSize: 11, color: C.textMuted)),
   ]);
 
   void _openForm(BuildContext context, [Customer? c]) =>
@@ -414,22 +410,22 @@ class _CustomerDetailSheet extends StatelessWidget {
                 Stack(alignment: Alignment.center, children: [
                   CircleAvatar(radius: 32, backgroundColor: Colors.white.withValues(alpha: 0.2),
                       child: Text(cust.name[0],
-                          style: GoogleFonts.syne(fontWeight: FontWeight.w800,
+                          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800,
                               fontSize: 26, color: Colors.white))),
                   if (cust.isVip) const Positioned(bottom: 0, right: 0,
                       child: Text('👑', style: TextStyle(fontSize: 18))),
                 ]),
                 const SizedBox(height: 10),
-                Text(cust.name, style: GoogleFonts.syne(fontWeight: FontWeight.w800,
+                Text(cust.name, style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800,
                     fontSize: 20, color: Colors.white)),
-                Text(cust.phone, style: GoogleFonts.syne(fontSize: 14, color: Colors.white70)),
+                Text(cust.phone, style: GoogleFonts.inter(fontSize: 14, color: Colors.white70)),
                 if (cust.email.isNotEmpty)
-                  Text(cust.email, style: GoogleFonts.syne(fontSize: 12, color: Colors.white54)),
+                  Text(cust.email, style: GoogleFonts.inter(fontSize: 12, color: Colors.white54)),
                 if (cust.address.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text('📍 ${cust.address}',
-                        style: GoogleFonts.syne(fontSize: 11, color: Colors.white54),
+                        style: GoogleFonts.inter(fontSize: 11, color: Colors.white54),
                         textAlign: TextAlign.center),
                   ),
                 const SizedBox(height: 12),
@@ -466,68 +462,69 @@ class _CustomerDetailSheet extends StatelessWidget {
             // Repair history
             SCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('🔧 Repair History (${custJobs.length})',
-                  style: GoogleFonts.syne(fontWeight: FontWeight.w700,
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w700,
                       fontSize: 14, color: C.white)),
               const SizedBox(height: 10),
               if (custJobs.isEmpty)
                 Center(child: Column(children: [
                   const Text('📭', style: TextStyle(fontSize: 32)),
                   const SizedBox(height: 6),
-                  Text('No repairs yet', style: GoogleFonts.syne(
+                  Text('No repairs yet', style: GoogleFonts.inter(
                       fontSize: 13, color: C.textDim)),
                 ]))
               else ...custJobs.map((j) => Padding(
                 padding: const EdgeInsets.only(bottom: 10),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: C.bgElevated,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: C.border),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Container(
-                        width: 3,
-                        decoration: BoxDecoration(
-                          color: C.statusColor(j.status),
-                          borderRadius: const BorderRadius.horizontal(
-                            left: Radius.circular(10),
-                          ),
-                        ),
+                child: IntrinsicHeight(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: C.bgElevated,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: C.border),
                       ),
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: Row(children: [
-                            Expanded(child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text('${j.brand} ${j.model}', style: GoogleFonts.syne(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 13,
-                                      color: C.text)),
-                                  Text('${j.jobNumber} · ${j.createdAt}', style: GoogleFonts.syne(
-                                      fontSize: 11, color: C.textMuted)),
-                                ])),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Pill('${C.statusIcon(j.status)} ${j.status}',
-                                    color: C.statusColor(j.status), small: true),
-                                const SizedBox(height: 4),
-                                Text(fmtMoney(j.totalAmount), style: GoogleFonts.syne(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: C.primary)),
-                              ],
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 3,
+                            decoration: BoxDecoration(
+                              color: C.statusColor(j.status),
+                              borderRadius: const BorderRadius.horizontal(
+                                left: Radius.circular(10),
+                              ),
                             ),
-                          ]),
-                        ),
+                          ),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.all(10),
+                              child: Row(children: [
+                                Expanded(child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text('${j.brand} ${j.model}', style: GoogleFonts.inter(
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 13,
+                                          color: C.text)),
+                                      Text('${j.jobNumber} · ${j.createdAt}', style: GoogleFonts.inter(
+                                          fontSize: 11, color: C.textMuted)),
+                                    ])),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Pill('${C.statusIcon(j.status)} ${j.status}',
+                                        color: C.statusColor(j.status), small: true),
+                                    const SizedBox(height: 4),
+                                    Text(fmtMoney(j.totalAmount), style: GoogleFonts.inter(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        color: C.primary)),
+                                  ],
+                                ),
+                              ]),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
               )),
             ])),
           ],
@@ -543,9 +540,9 @@ class _CustomerDetailSheet extends StatelessWidget {
     child: Column(children: [
       Text(icon, style: const TextStyle(fontSize: 20)),
       const SizedBox(height: 4),
-      Text(val, style: GoogleFonts.syne(fontWeight: FontWeight.w800,
+      Text(val, style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800,
           fontSize: 14, color: color)),
-      Text(label, style: GoogleFonts.syne(fontSize: 10, color: C.textMuted)),
+      Text(label, style: GoogleFonts.inter(fontSize: 10, color: C.textMuted)),
     ]),
   );
 }

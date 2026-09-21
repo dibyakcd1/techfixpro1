@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -9,6 +8,8 @@ import '../models/m.dart';
 import '../data/providers.dart';
 import '../theme/t.dart';
 import '../widgets/w.dart';
+import '../services/supabase_service.dart';
+import '../services/audit_log_service.dart';
 
 class POSScreen extends ConsumerStatefulWidget {
   const POSScreen({super.key});
@@ -41,39 +42,39 @@ class _POSState extends ConsumerState<POSScreen> {
     super.dispose();
   }
 
-  // ── Fetch products from Firebase and set local state ──────────────────────
-  Future<void> _syncProductsFromFirebase(String shopId) async {
+  // ── Fetch products from Supabase and set local state ──────────────────────
+  Future<void> _syncProductsFromSupabase(String shopId) async {
     try {
-      final snap = await FirebaseDatabase.instance
-          .ref('products').orderByChild('shopId').equalTo(shopId).get();
+      final response = await SupabaseService.instance.client
+          .from('products')
+          .select()
+          .eq('shopId', shopId);
       final list = <Product>[];
-      if (snap.exists) {
-        for (final child in snap.children) {
-          if (child.key == null || child.value is! Map) continue;
-          final d = Map<String, dynamic>.from(child.value as Map);
-          list.add(Product(
-            productId:    child.key!,
-            shopId:       (d['shopId']       as String?) ?? shopId,
-            sku:          (d['sku']          as String?) ?? '',
-            productName:  (d['productName']  as String?) ?? '',
-            category:     (d['category']     as String?) ?? 'Spare Parts',
-            brand:        (d['brand']        as String?) ?? '',
-            description:  (d['description']  as String?) ?? '',
-            supplierName: (d['supplierName'] as String?) ?? '',
-            costPrice:    (d['costPrice']    as num?)?.toDouble() ?? 0,
-            sellingPrice: (d['sellingPrice'] as num?)?.toDouble() ?? 0,
-            stockQty:     (d['stockQty']     as int?)  ?? 0,
-            reorderLevel: (d['reorderLevel'] as int?)  ?? 5,
-            isActive:     (d['isActive']     as bool?) ?? true,
-            imageUrl:     (d['imageUrl']     as String?) ?? '',
-            createdAt:    (d['createdAt']    as String?) ?? '',
-            updatedAt:    (d['updatedAt']    as String?) ?? '',
-          ));
-        }
+      for (final d in response) {
+        final productId = d['productId'] as String?;
+        if (productId == null) continue;
+        list.add(Product(
+          productId:    productId,
+          shopId:       (d['shopId']       as String?) ?? shopId,
+          sku:          (d['sku']          as String?) ?? '',
+          productName:  (d['productName']  as String?) ?? '',
+          category:     (d['category']     as String?) ?? 'Spare Parts',
+          brand:        (d['brand']        as String?) ?? '',
+          description:  (d['description']  as String?) ?? '',
+          supplierName: (d['supplierName'] as String?) ?? '',
+          costPrice:    (d['costPrice']    as num?)?.toDouble() ?? 0,
+          sellingPrice: (d['sellingPrice'] as num?)?.toDouble() ?? 0,
+          stockQty:     (d['stockQty']     as int?)  ?? 0,
+          reorderLevel: (d['reorderLevel'] as int?)  ?? 5,
+          isActive:     (d['isActive']     as bool?) ?? true,
+          imageUrl:     (d['imageUrl']     as String?) ?? '',
+          createdAt:    (d['createdAt']    as String?) ?? '',
+          updatedAt:    (d['updatedAt']    as String?) ?? '',
+        ));
       }
       ref.read(productsProvider.notifier).setAll(list);
     } catch (e) {
-      debugPrint('⚠️ _syncProductsFromFirebase: $e');
+      debugPrint('⚠️ _syncProductsFromSupabase: $e');
     }
   }
 
@@ -84,10 +85,10 @@ class _POSState extends ConsumerState<POSScreen> {
   //  OLD code did:
   //    1. Write newQty to DB          (DB: 10 - 2 = 8)
   //    2. adjustQty(id, -item.qty)    (local state: 10 - 2 = 8) ← correct
-  //    3. _syncProductsFromFirebase() (local state = DB = 8)    ← deducts AGAIN? No...
+  //    3. _syncProductsFromSupabase() (local state = DB = 8)    ← deducts AGAIN? No...
   //
   //  The actual double-deduction happened because _synced was reset to false
-  //  somewhere (or the widget rebuilt), causing _syncProductsFromFirebase to
+  //  somewhere (or the widget rebuilt), causing _syncProductsFromSupabase to
   //  run AGAIN before adjustQty ran. Race condition:
   //    t=0  Sale starts, snapshot allProducts has qty=10
   //    t=1  DB write: 10-2=8
@@ -95,13 +96,14 @@ class _POSState extends ConsumerState<POSScreen> {
   //    t=3  adjustQty(-2): local = 8-2 = 6  ← WRONG, deducted twice
   //
   //  FIX: REMOVE adjustQty entirely after a sale. After the DB write,
-  //  call _syncProductsFromFirebase() ONCE as the sole source of truth.
+  //  call _syncProductsFromSupabase() ONCE as the sole source of truth.
   //  Local state will equal DB state (8). No double deduction possible.
   //
-  Future<void> _processSale(List<CartItem> cart, String shopId) async {
-    final db = FirebaseDatabase.instance;
+  Future<void> _processSale(List<CartItem> cart, String shopId, String userId) async {
+    final supabase = SupabaseService.instance.client;
     final now = DateTime.now().millisecondsSinceEpoch;
     final nowIso = DateTime.now().toIso8601String();
+    final saleId = 'sale_$now';
 
     // Snapshot current local qty BEFORE any writes (for stock_history oldQty)
     final snapshot = Map.fromEntries(
@@ -109,13 +111,16 @@ class _POSState extends ConsumerState<POSScreen> {
     );
 
     // ── Step 1: Write stock deductions + transactions (critical) ─────────────
-    final batch = <String, dynamic>{};
     for (final item in cart) {
       final oldQty = snapshot[item.product.productId] ?? item.product.stockQty;
       final newQty = (oldQty - item.qty).clamp(0, 99999);
-      batch['products/${item.product.productId}/stockQty'] = newQty;
-      batch['products/${item.product.productId}/updatedAt'] = nowIso;
-      batch['transactions/tx_${now}_${item.product.productId}'] = {
+      // Update product stockQty
+      await supabase.from('products').update({
+        'stockQty': newQty,
+        'updatedAt': nowIso,
+      }).eq('productId', item.product.productId);
+      // Insert transaction
+      final tx = {
         'shopId':      shopId,
         'productId':   item.product.productId,
         'productName': item.product.productName,
@@ -126,22 +131,45 @@ class _POSState extends ConsumerState<POSScreen> {
         'type':        'sale',
         'payment':     _payment,
         'time':        now,
+        'saleId':      saleId,
+        'transactionId': 'tx_${now}_${item.product.productId}',
       };
+      await supabase.from('transactions').insert(tx);
+      // Add to local provider
+      ref.read(transactionsProvider.notifier).add(tx);
     }
-    // Throws on permission denied — caught by caller which shows SnackBar
-    await db.ref().update(batch);
 
-    // ── Step 2: Re-sync local state from DB (single source of truth) ─────────
+    // ── Step 2: Log to audit logs ────────────────────────────────────────────
+    final subtotal = cart.fold(0.0, (sum, item) => sum + item.product.sellingPrice * item.qty);
+    await AuditLogService.log(
+      shopId: shopId,
+      userId: userId,
+      action: AuditLogService.create,
+      entity: 'Sale',
+      entityId: saleId,
+      details: {
+        'items': cart.map((item) => {
+          'productId': item.product.productId,
+          'productName': item.product.productName,
+          'qty': item.qty,
+          'price': item.product.sellingPrice,
+          'total': item.product.sellingPrice * item.qty,
+        }).toList(),
+        'subtotal': subtotal,
+        'payment': _payment,
+      },
+    );
+
+    // ── Step 3: Re-sync local state from DB (single source of truth) ─────────
     // NEVER call adjustQty here — that would subtract again from what DB has.
-    await _syncProductsFromFirebase(shopId);
+    await _syncProductsFromSupabase(shopId);
 
-    // ── Step 3: Stock history (non-critical, failures don't block the sale) ──
+    // ── Step 4: Stock history (non-critical, failures don't block the sale) ──
     try {
-      final histBatch = <String, dynamic>{};
       for (final item in cart) {
         final oldQty = snapshot[item.product.productId] ?? item.product.stockQty;
         final newQty = (oldQty - item.qty).clamp(0, 99999);
-        histBatch['stock_history/h_${now}_${item.product.productId}'] = {
+        await supabase.from('stock_history').insert({
           'shopId':      shopId,
           'productId':   item.product.productId,
           'productName': item.product.productName,
@@ -151,9 +179,9 @@ class _POSState extends ConsumerState<POSScreen> {
           'type':        'sale',
           'time':        now,
           'by':          'POS',
-        };
+          'historyId': 'h_${now}_${item.product.productId}',
+        });
       }
-      await db.ref().update(histBatch);
     } catch (e) {
       debugPrint('⚠️ stock_history write (non-fatal): $e');
     }
@@ -168,7 +196,10 @@ class _POSState extends ConsumerState<POSScreen> {
 
     if (!_synced && !_syncing && session != null && session.shopId.isNotEmpty) {
       _syncing = true;
-      _syncProductsFromFirebase(session.shopId).whenComplete(() {
+      Future.wait([
+        _syncProductsFromSupabase(session.shopId),
+        ref.read(transactionsProvider.notifier).loadFromSupabase(session.shopId),
+      ]).whenComplete(() {
         if (mounted) setState(() { _synced = true; _syncing = false; });
       });
     }
@@ -207,7 +238,7 @@ class _POSState extends ConsumerState<POSScreen> {
             child: TextField(
               controller: _searchCtrl,
               onChanged: (v) => setState(() => _search = v),
-              style: GoogleFonts.syne(fontSize: 13, color: C.text),
+              style: GoogleFonts.inter(fontSize: 13, color: C.text),
               decoration: const InputDecoration(
                 hintText: '🔍 Search or scan barcode...',
                 prefixIcon: Icon(Icons.qr_code_scanner, color: C.textMuted, size: 20),
@@ -260,7 +291,7 @@ class _POSState extends ConsumerState<POSScreen> {
                                             color: C.primary,
                                             shape: BoxShape.circle),
                                         child: Center(child: Text('$qty',
-                                            style: GoogleFonts.syne(
+                                            style: GoogleFonts.plusJakartaSans(
                                                 fontSize: 11,
                                                 fontWeight: FontWeight.w800,
                                                 color: C.bg))),
@@ -269,18 +300,18 @@ class _POSState extends ConsumerState<POSScreen> {
                                 ),
                                 const Spacer(),
                                 Text(p.productName,
-                                    style: GoogleFonts.syne(
+                                    style: GoogleFonts.inter(
                                         fontWeight: FontWeight.w700,
                                         fontSize: 12, color: C.white),
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis),
                                 const SizedBox(height: 4),
                                 Text(fmtMoney(p.sellingPrice),
-                                    style: GoogleFonts.syne(
+                                    style: GoogleFonts.plusJakartaSans(
                                         fontWeight: FontWeight.w800,
                                         fontSize: 14, color: C.primary)),
                                 Text('${p.stockQty} in stock',
-                                    style: GoogleFonts.syne(
+                                    style: GoogleFonts.inter(
                                         fontSize: 10, color: C.textMuted)),
                               ],
                             ),
@@ -309,7 +340,7 @@ class _POSState extends ConsumerState<POSScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text('🛒 Cart (${cart.length})',
-                                style: GoogleFonts.syne(
+                                style: GoogleFonts.inter(
                                     fontWeight: FontWeight.w700,
                                     fontSize: 14, color: C.white)),
                             const SizedBox(height: 12),
@@ -322,13 +353,13 @@ class _POSState extends ConsumerState<POSScreen> {
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(item.product.productName,
-                                          style: GoogleFonts.syne(
+                                          style: GoogleFonts.inter(
                                               fontWeight: FontWeight.w600,
                                               fontSize: 13, color: C.text),
                                           overflow: TextOverflow.ellipsis),
                                       Text(
                                           '${fmtMoney(item.product.sellingPrice)} each',
-                                          style: GoogleFonts.syne(
+                                          style: GoogleFonts.inter(
                                               fontSize: 11,
                                               color: C.textMuted)),
                                     ])),
@@ -341,7 +372,7 @@ class _POSState extends ConsumerState<POSScreen> {
                                     padding: const EdgeInsets.symmetric(
                                         horizontal: 12),
                                     child: Text('${item.qty}',
-                                        style: GoogleFonts.syne(
+                                        style: GoogleFonts.inter(
                                             fontWeight: FontWeight.w700,
                                             color: C.white)),
                                   ),
@@ -357,7 +388,7 @@ class _POSState extends ConsumerState<POSScreen> {
                                       fmtMoney(item.product.sellingPrice *
                                           item.qty),
                                       textAlign: TextAlign.right,
-                                      style: GoogleFonts.syne(
+                                      style: GoogleFonts.inter(
                                           fontWeight: FontWeight.w700,
                                           color: C.primary, fontSize: 13)),
                                 ),
@@ -368,7 +399,7 @@ class _POSState extends ConsumerState<POSScreen> {
 
                             // Discount
                             Text('DISCOUNT',
-                                style: GoogleFonts.syne(
+                                style: GoogleFonts.inter(
                                     fontSize: 10,
                                     fontWeight: FontWeight.w700,
                                     color: C.textMuted, letterSpacing: 0.5)),
@@ -386,7 +417,7 @@ class _POSState extends ConsumerState<POSScreen> {
                                   keyboardType: TextInputType.number,
                                   onChanged: (v) => setState(() =>
                                       _discount = double.tryParse(v) ?? 0),
-                                  style: GoogleFonts.syne(
+                                  style: GoogleFonts.inter(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w700,
                                       color: C.text),
@@ -394,9 +425,9 @@ class _POSState extends ConsumerState<POSScreen> {
                                     prefixText: _discPct ? '' : '₹',
                                     suffixText: _discPct ? '%' : null,
                                     prefixStyle:
-                                        GoogleFonts.syne(color: C.textMuted),
+                                        GoogleFonts.inter(color: C.textMuted),
                                     suffixStyle:
-                                        GoogleFonts.syne(color: C.textMuted),
+                                        GoogleFonts.inter(color: C.textMuted),
                                     contentPadding:
                                         const EdgeInsets.symmetric(
                                             horizontal: 12, vertical: 10),
@@ -418,14 +449,14 @@ class _POSState extends ConsumerState<POSScreen> {
                                     MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(row[0] as String,
-                                      style: GoogleFonts.syne(
+                                      style: GoogleFonts.inter(
                                           fontSize: 13,
                                           color: C.textMuted)),
                                   Text(
                                     (row[1] as double) < 0
                                         ? '-${fmtMoney(-(row[1] as double))}'
                                         : fmtMoney(row[1] as double),
-                                    style: GoogleFonts.syne(
+                                    style: GoogleFonts.inter(
                                         fontSize: 13,
                                         color: (row[2] as Color?) ?? C.text),
                                   ),
@@ -438,11 +469,11 @@ class _POSState extends ConsumerState<POSScreen> {
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Text('TOTAL',
-                                    style: GoogleFonts.syne(
+                                    style: GoogleFonts.plusJakartaSans(
                                         fontWeight: FontWeight.w800,
                                         fontSize: 16, color: C.white)),
                                 Text(fmtMoney(total),
-                                    style: GoogleFonts.syne(
+                                    style: GoogleFonts.plusJakartaSans(
                                         fontWeight: FontWeight.w800,
                                         fontSize: 18, color: C.green)),
                               ],
@@ -471,7 +502,7 @@ class _POSState extends ConsumerState<POSScreen> {
                                           color: sel ? C.primary : C.border),
                                     ),
                                     child: Text(m,
-                                        style: GoogleFonts.syne(
+                                        style: GoogleFonts.inter(
                                             fontSize: 12,
                                             fontWeight: FontWeight.w700,
                                             color: sel
@@ -492,8 +523,10 @@ class _POSState extends ConsumerState<POSScreen> {
                                     (_charging || session == null || cart.isEmpty)
                                         ? null
                                         : () async {
+                                            // Capture context-dependent objects
+                                            // BEFORE any await to avoid async gaps
                                             final messenger = ScaffoldMessenger.of(context);
-                                            final capturedContext = context;
+                                            final navigator = Navigator.of(context);
                                             setState(() => _charging = true);
                                             try {
                                               // Capture for receipt before clearing cart
@@ -504,7 +537,7 @@ class _POSState extends ConsumerState<POSScreen> {
                                               final saleTaxType = taxType;
                                               final saleTaxRate = taxRate;
 
-                                              await _processSale(cart, session.shopId);
+                                              await _processSale(cart, session.shopId, session.uid);
                                               ref.read(cartProvider.notifier).clear();
 
                                               if (mounted) {
@@ -520,7 +553,7 @@ class _POSState extends ConsumerState<POSScreen> {
                                                 // Show receipt sheet — user taps
                                                 // 'New Sale' inside to reset
                                                 showModalBottomSheet(
-                                                  context: capturedContext,
+                                                  context: navigator.context,
                                                   isScrollControlled: true,
                                                   isDismissible: false,
                                                   enableDrag: false,
@@ -535,7 +568,7 @@ class _POSState extends ConsumerState<POSScreen> {
                                                     payment: _payment,
                                                     settings: ref.read(settingsProvider),
                                                     onNewSale: () {
-                                                      Navigator.of(capturedContext).pop();
+                                                      navigator.pop();
                                                       setState(() {
                                                         _discount = 0;
                                                         _discCtrl.text = '0';
@@ -551,7 +584,7 @@ class _POSState extends ConsumerState<POSScreen> {
                                                 messenger.showSnackBar(SnackBar(
                                                   content: Text(
                                                       'Payment failed: $e',
-                                                      style: GoogleFonts.syne(
+                                                      style: GoogleFonts.inter(
                                                           fontWeight:
                                                               FontWeight.w700)),
                                                   backgroundColor: C.red,
@@ -582,7 +615,7 @@ class _POSState extends ConsumerState<POSScreen> {
                                             color: Colors.white))
                                     : Text(
                                         '💳  Charge ${fmtMoney(total)}  ·  $_payment',
-                                        style: GoogleFonts.syne(
+                                        style: GoogleFonts.plusJakartaSans(
                                             fontWeight: FontWeight.w800,
                                             fontSize: 15)),
                               ),
@@ -625,7 +658,7 @@ class _POSState extends ConsumerState<POSScreen> {
         border: Border.all(color: sel ? C.accent : C.border),
       ),
       child: Text(label,
-          style: GoogleFonts.syne(
+          style: GoogleFonts.inter(
               fontSize: 12, fontWeight: FontWeight.w700,
               color: sel ? C.accent : C.textMuted)),
     ),
@@ -798,13 +831,13 @@ class _PosReceiptSheetState extends State<_PosReceiptSheet> {
               ),
               const SizedBox(height: 12),
               Text('Payment Complete',
-                  style: GoogleFonts.syne(
+                  style: GoogleFonts.plusJakartaSans(
                       fontSize: 20,
                       fontWeight: FontWeight.w800,
                       color: C.green)),
               const SizedBox(height: 4),
               Text('$payIcon  ${widget.payment}  ·  ${fmtMoney(widget.total)}',
-                  style: GoogleFonts.syne(
+                  style: GoogleFonts.inter(
                       fontSize: 13, color: C.textMuted)),
             ]),
           ),
@@ -826,13 +859,13 @@ class _PosReceiptSheetState extends State<_PosReceiptSheet> {
                         padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
                         child: Row(children: [
                           Expanded(child: Text('ITEMS',
-                              style: GoogleFonts.syne(
+                              style: GoogleFonts.inter(
                                   fontSize: 9,
                                   fontWeight: FontWeight.w700,
                                   color: C.primary,
                                   letterSpacing: 0.8))),
                           Text('AMOUNT',
-                              style: GoogleFonts.syne(
+                              style: GoogleFonts.inter(
                                   fontSize: 9,
                                   fontWeight: FontWeight.w700,
                                   color: C.primary,
@@ -846,17 +879,17 @@ class _PosReceiptSheetState extends State<_PosReceiptSheet> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(item.product.productName,
-                                  style: GoogleFonts.syne(
+                                  style: GoogleFonts.inter(
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600,
                                       color: C.text)),
                               Text('×${item.qty}  @  ${fmtMoney(item.product.sellingPrice)}',
-                                  style: GoogleFonts.syne(
+                                  style: GoogleFonts.inter(
                                       fontSize: 10, color: C.textMuted)),
                             ],
                           )),
                           Text(fmtMoney(item.product.sellingPrice * item.qty),
-                              style: GoogleFonts.syne(
+                              style: GoogleFonts.inter(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w700,
                                   color: C.text)),
@@ -887,12 +920,12 @@ class _PosReceiptSheetState extends State<_PosReceiptSheet> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text('TOTAL',
-                              style: GoogleFonts.syne(
+                              style: GoogleFonts.plusJakartaSans(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w800,
                                   color: C.white)),
                           Text(fmtMoney(widget.total),
-                              style: GoogleFonts.syne(
+                              style: GoogleFonts.plusJakartaSans(
                                   fontSize: 18,
                                   fontWeight: FontWeight.w800,
                                   color: C.green)),
@@ -922,7 +955,7 @@ class _PosReceiptSheetState extends State<_PosReceiptSheet> {
                               strokeWidth: 2, color: C.primary))
                       : const Icon(Icons.print_outlined, size: 16),
                   label: Text('Print Receipt',
-                      style: GoogleFonts.syne(
+                      style: GoogleFonts.inter(
                           fontWeight: FontWeight.w700, fontSize: 13)),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: C.primary,
@@ -941,7 +974,7 @@ class _PosReceiptSheetState extends State<_PosReceiptSheet> {
                   onPressed: widget.onNewSale,
                   icon: const Icon(Icons.add_shopping_cart_outlined, size: 18),
                   label: Text('New Sale',
-                      style: GoogleFonts.syne(
+                      style: GoogleFonts.plusJakartaSans(
                           fontWeight: FontWeight.w800, fontSize: 14)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: C.primary,
@@ -971,10 +1004,10 @@ class _PosRow extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 6),
     child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-      Text(label, style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+      Text(label, style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
       Text(
         amount < 0 ? '-${fmtMoney(-amount)}' : fmtMoney(amount),
-        style: GoogleFonts.syne(
+        style: GoogleFonts.inter(
             fontSize: 12,
             fontWeight: FontWeight.w600,
             color: color ?? C.text),

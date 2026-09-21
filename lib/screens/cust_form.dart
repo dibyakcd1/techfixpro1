@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:uuid/uuid.dart';
 import '../models/m.dart';
 import '../data/providers.dart';
 import '../theme/t.dart';
 import '../widgets/w.dart';
+import '../services/supabase_service.dart';
 
 class CustomerFormScreen extends ConsumerStatefulWidget {
   final Customer? customer;
@@ -68,33 +68,58 @@ class _CustFormState extends ConsumerState<CustomerFormScreen> {
     );
 
     try {
-      final db = FirebaseDatabase.instance;
-      await db.ref('customers/$id').set({
-        'customerId': updated.customerId,
-        'name': updated.name,
-        'phone': updated.phone,
-        'email': updated.email,
-        'address': updated.address,
-        'tier': updated.tier,
-        'isVip': updated.isVip,
-        'isBlacklisted': updated.isBlacklisted,
-        'points': updated.points,
-        'repairsCount': updated.repairsCount,
-        'totalSpend': updated.totalSpend,
-        'shopId': shopId,
-        'createdAt': updated.createdAt,
-        'updatedAt': updated.updatedAt,
-      });
+      if (_isEdit) {
+        await SupabaseService.instance.client
+            .from('customers')
+            .update({
+              'name': updated.name,
+              'phone': updated.phone,
+              'email': updated.email,
+              'address': updated.address,
+              'tier': updated.tier,
+              'isVip': updated.isVip,
+              'isBlacklisted': updated.isBlacklisted,
+              'points': updated.points,
+              'repairsCount': updated.repairsCount,
+              'totalSpend': updated.totalSpend,
+              'updatedAt': updated.updatedAt,
+            })
+            .eq('customerId', id);
+        // Also update local provider immediately!
+        ref.read(customersProvider.notifier).update(updated);
+      } else {
+        await SupabaseService.instance.client
+            .from('customers')
+            .insert({
+              'customerId': updated.customerId,
+              'name': updated.name,
+              'phone': updated.phone,
+              'email': updated.email,
+              'address': updated.address,
+              'tier': updated.tier,
+              'isVip': updated.isVip,
+              'isBlacklisted': updated.isBlacklisted,
+              'points': updated.points,
+              'repairsCount': updated.repairsCount,
+              'totalSpend': updated.totalSpend,
+              'shopId': shopId,
+              'createdAt': updated.createdAt,
+              'updatedAt': updated.updatedAt,
+            });
+        // Also add to local provider immediately!
+        ref.read(customersProvider.notifier).add(updated);
+      }
       if (mounted) {
         nav.pop();
         messenger.showSnackBar(SnackBar(
           content: Text(_isEdit ? 'Customer updated!' : 'New customer added!',
-              style: GoogleFonts.syne(fontWeight: FontWeight.w700)),
+              style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
           backgroundColor: C.green, behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ));
       }
     } catch (_) {
+      // Fallback: update local provider even if Supabase fails
       if (_isEdit) {
         ref.read(customersProvider.notifier).update(updated);
       } else {
@@ -113,20 +138,22 @@ class _CustFormState extends ConsumerState<CustomerFormScreen> {
         builder: (ctx) => AlertDialog(
          backgroundColor: C.bgCard,
          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-         title: Text('Delete Customer?', style: GoogleFonts.syne(fontWeight: FontWeight.w800, color: C.white)),
+         title: Text('Delete Customer?', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, color: C.white)),
          content: Text(
            'This will permanently remove ${widget.customer!.name}. Their repair history remains.',
-           style: GoogleFonts.syne(fontSize: 13, color: C.textMuted),
+           style: GoogleFonts.inter(fontSize: 13, color: C.textMuted),
          ),
          actions: [
            TextButton(onPressed: () => Navigator.pop(ctx),
-               child: Text('Cancel', style: GoogleFonts.syne(color: C.textMuted))),
+               child: Text('Cancel', style: GoogleFonts.inter(color: C.textMuted))),
            ElevatedButton(
              onPressed: () async {
                final id = widget.customer!.customerId;
                try {
-                 final db = FirebaseDatabase.instance;
-                 await db.ref('customers/$id').remove();
+                 await SupabaseService.instance.client
+                     .from('customers')
+                     .delete()
+                     .eq('customerId', id);
                } catch (_) {}
                ref.read(customersProvider.notifier).delete(id);
                if (!context.mounted) return;
@@ -135,7 +162,7 @@ class _CustFormState extends ConsumerState<CustomerFormScreen> {
              },
              style: ElevatedButton.styleFrom(backgroundColor: C.red, foregroundColor: C.white,
                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-             child: Text('Delete', style: GoogleFonts.syne(fontWeight: FontWeight.w800)),
+             child: Text('Delete', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
            ),
          ],
        ),
@@ -149,11 +176,11 @@ class _CustFormState extends ConsumerState<CustomerFormScreen> {
       backgroundColor: C.bg,
       appBar: AppBar(
         title: Text(_isEdit ? 'Edit Customer' : 'New Customer',
-            style: GoogleFonts.syne(fontWeight: FontWeight.w800)),
+            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
         actions: [
           TextButton(
             onPressed: _save,
-            child: Text('Save', style: GoogleFonts.syne(fontWeight: FontWeight.w800,
+            child: Text('Save', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800,
                 fontSize: 15, color: C.primary)),
           ),
         ],
@@ -171,7 +198,7 @@ class _CustFormState extends ConsumerState<CustomerFormScreen> {
                 shape: BoxShape.circle,
               ),
               child: Center(child: Text(initial,
-                  style: GoogleFonts.syne(fontSize: 28, fontWeight: FontWeight.w800, color: C.bg))),
+                  style: GoogleFonts.plusJakartaSans(fontSize: 28, fontWeight: FontWeight.w800, color: C.bg))),
             )),
             const SizedBox(height: 24),
 
@@ -188,7 +215,7 @@ class _CustFormState extends ConsumerState<CustomerFormScreen> {
             const SLabel('LOYALTY & STATUS'),
             SCard(child: Column(children: [
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                Text('Loyalty Tier', style: GoogleFonts.syne(fontSize: 14,
+                Text('Loyalty Tier', style: GoogleFonts.inter(fontSize: 14,
                     color: C.text, fontWeight: FontWeight.w600)),
                 DropdownButton<String>(
                   value: _tier,
@@ -200,7 +227,7 @@ class _CustFormState extends ConsumerState<CustomerFormScreen> {
                         Container(width: 10, height: 10, decoration: BoxDecoration(
                             color: C.tierColor(t), shape: BoxShape.circle)),
                         const SizedBox(width: 6),
-                        Text(t, style: GoogleFonts.syne(fontSize: 13, color: C.tierColor(t),
+                        Text(t, style: GoogleFonts.inter(fontSize: 13, color: C.tierColor(t),
                             fontWeight: FontWeight.w700)),
                       ]))).toList(),
                 ),
@@ -208,10 +235,10 @@ class _CustFormState extends ConsumerState<CustomerFormScreen> {
               const Divider(color: C.border, height: 20),
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('VIP Customer 👑', style: GoogleFonts.syne(fontSize: 14,
+                  Text('VIP Customer 👑', style: GoogleFonts.inter(fontSize: 14,
                       color: C.text, fontWeight: FontWeight.w600)),
                   Text('Priority service & special benefits',
-                      style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+                      style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
                 ]),
                 Switch(value: _isVip, onChanged: (v) => setState(() => _isVip = v)),
               ]),
@@ -238,16 +265,16 @@ class _CustFormState extends ConsumerState<CustomerFormScreen> {
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         RichText(text: TextSpan(
           text: label.toUpperCase(),
-          style: GoogleFonts.syne(fontSize: 10, fontWeight: FontWeight.w700,
+          style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w700,
               color: C.textMuted, letterSpacing: 0.5),
           children: required ? [TextSpan(text: ' *',
-              style: GoogleFonts.syne(color: C.accent))] : [],
+              style: GoogleFonts.inter(color: C.accent))] : [],
         )),
         const SizedBox(height: 5),
         TextFormField(
           controller: ctrl, keyboardType: type, maxLines: maxLines,
           onChanged: onChanged,
-          style: GoogleFonts.syne(fontSize: 13, color: C.text),
+          style: GoogleFonts.inter(fontSize: 13, color: C.text),
           decoration: InputDecoration(hintText: hint),
           validator: required
               ? (v) => (v == null || v.trim().isEmpty) ? '$label is required' : null

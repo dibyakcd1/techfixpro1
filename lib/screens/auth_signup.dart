@@ -1,509 +1,428 @@
 // ─────────────────────────────────────────────────────────────────────────────
-//  screens/auth_signup.dart  — Full email-verified registration
+//  screens/auth_signup.dart — Owner signup with Supabase Auth & seed data
 //
-//  FLOW:
-//  Step 1: Form (shop, name, email, phone, password, PIN)
-//  Step 2: Firebase creates account → sends verification email
-//          App polls every 4 s for emailVerified = true
-//          User clicks link in email → auto-detected OR presses "I verified"
-//  Step 3: Only NOW write shop data to Firebase DB → enter app
+//  FIX: signUp() does NOT create a session when email confirmation is enabled.
+//  All DB inserts (registrations / shops / users) now happen AFTER the user
+//  has verified their email and signed in for the first time, via a
+//  deep-link callback caught in main.dart (onAuthStateChange).
 //
-//  WHY defer DB write until after verification?
-//  → Prevents abandoned unverified accounts from polluting the database.
+//  Flow:
+//    SignUpScreen → signUp() → show "check your email" screen
+//    User clicks link → app opens → onAuthStateChange fires (event: signedIn)
+//    → PendingOnboardingService.run() seeds the DB with the saved data
+//    → navigate to home
 // ─────────────────────────────────────────────────────────────────────────────
 
-import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_database/firebase_database.dart';
-import '../data/seed.dart';
-import '../data/providers.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/t.dart';
 import '../widgets/w.dart';
+import '../data/providers.dart';
+import '../data/seed.dart';
+import 'auth_login.dart';
+import '../services/supabase_service.dart';
 
-enum _Step { form, verifyEmail, done }
+// ─────────────────────────────────────────────────────────────────────────────
+//  PendingOnboardingService
+//  Saves signup data to SharedPreferences BEFORE email verification,
+//  then runs the actual DB seeding AFTER the session is established.
+//  Call PendingOnboardingService.run() from your onAuthStateChange handler.
+// ─────────────────────────────────────────────────────────────────────────────
+class PendingOnboardingService {
+  static const _key = 'pending_onboarding';
 
+  /// Persist all signup data locally so it survives app restart.
+  static Future<void> save({
+    required String shopId,
+    required String ownerName,
+    required String ownerEmail,
+    required String ownerPhone,
+    required String shopName,
+    required String ownerPin,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_key, jsonEncode({
+      'shopId':     shopId,
+      'ownerName':  ownerName,
+      'ownerEmail': ownerEmail,
+      'ownerPhone': ownerPhone,
+      'shopName':   shopName,
+      'ownerPin':   ownerPin,
+    }));
+  }
+
+  /// Call this from onAuthStateChange when event == AuthChangeEvent.signedIn.
+  /// Runs ShopOnboarding.initialize() with the session now active, then clears.
+  static Future<void> run(String ownerUid, WidgetRef ref) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_key);
+    if (raw == null) return;   // Nothing pending — normal login, skip.
+
+    final data = jsonDecode(raw) as Map<String, dynamic>;
+    final shopId = data['shopId'] as String;
+
+    try {
+      await ShopOnboarding.initialize(
+        shopId:     shopId,
+        ownerUid:   ownerUid,
+        ownerName:  data['ownerName']  as String,
+        ownerEmail: data['ownerEmail'] as String,
+        ownerPhone: data['ownerPhone'] as String,
+        shopName:   data['shopName']   as String,
+        ownerPin:   data['ownerPin']   as String,
+      );
+
+      // Load providers now that DB rows exist
+      try { await ref.read(settingsProvider.notifier).loadFromSupabase(shopId); } catch (_) {}
+      try { await ref.read(staffProvider.notifier).loadFromSupabase(shopId); } catch (_) {}
+      try { await ref.read(transactionsProvider.notifier).loadFromSupabase(shopId); } catch (_) {}
+
+      // Save shopId for future fast-login
+      await prefs.setString('shopId', shopId);
+    } finally {
+      // Always clear pending data whether it succeeded or failed
+      await prefs.remove(_key);
+    }
+  }
+
+  /// Returns true if there is pending onboarding data waiting to be seeded.
+  static Future<bool> hasPending() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.containsKey(_key);
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SignUpScreen
+// ─────────────────────────────────────────────────────────────────────────────
 class SignUpScreen extends ConsumerStatefulWidget {
   const SignUpScreen({super.key});
   @override
   ConsumerState<SignUpScreen> createState() => _SignUpScreenState();
 }
 
-class _SignUpScreenState extends ConsumerState<SignUpScreen>
-    with SingleTickerProviderStateMixin {
+class _SignUpScreenState extends ConsumerState<SignUpScreen> {
+  final _name       = TextEditingController();
+  final _email      = TextEditingController();
+  final _phone      = TextEditingController();
+  final _shopName   = TextEditingController();
+  final _password   = TextEditingController();
+  final _confirm    = TextEditingController();
+  final _pin        = TextEditingController();
+  final _pinConfirm = TextEditingController();
 
-  final _shopName  = TextEditingController();
-  final _ownerName = TextEditingController();
-  final _email     = TextEditingController();
-  final _phone     = TextEditingController();
-  final _password  = TextEditingController();
-  final _pin       = TextEditingController();
-
-  bool    _showPassword = false;
-  bool    _loading      = false;
+  bool _loading      = false;
+  bool _showPassword = false;
+  bool _showConfirm  = false;
+  bool _created      = false;
   String? _error;
-  _Step   _step         = _Step.form;
-
-  User?   _pendingUser;
-  String? _pendingShopName;
-  String? _pendingOwnerName;
-  String? _pendingPhone;
-  String? _pendingPin;
-
-  Timer? _pollTimer;
-  int    _resendCooldown = 0;
-  Timer? _cooldownTimer;
-
-  late final AnimationController _fadeCtrl;
-  late final Animation<double>   _fadeAnim;
-
-  @override
-  void initState() {
-    super.initState();
-    _fadeCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 400));
-    _fadeAnim = CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeOut);
-    _fadeCtrl.forward();
-  }
 
   @override
   void dispose() {
-    _shopName.dispose(); _ownerName.dispose(); _email.dispose();
-    _phone.dispose(); _password.dispose(); _pin.dispose();
-    _pollTimer?.cancel(); _cooldownTimer?.cancel();
-    _fadeCtrl.dispose();
+    _name.dispose(); _email.dispose(); _phone.dispose();
+    _shopName.dispose(); _password.dispose(); _confirm.dispose();
+    _pin.dispose(); _pinConfirm.dispose();
     super.dispose();
   }
 
-  String? _validate() {
-    if (_shopName.text.trim().isEmpty)  return 'Shop name is required';
-    if (_ownerName.text.trim().isEmpty) return 'Your full name is required';
-    final email = _email.text.trim();
-    if (email.isEmpty) return 'Email is required';
-    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email))
-      return 'Enter a valid email address';
-    final digits = _phone.text.replaceAll(RegExp(r'[^0-9]'), '');
-    if (digits.length != 10) return 'Phone must be 10 digits';
-    if (_password.text.length < 8) return 'Password must be at least 8 characters';
-    if (!RegExp(r'^\d{4}$').hasMatch(_pin.text)) return 'App PIN must be exactly 4 digits';
-    return null;
-  }
+  Future<void> _signUp() async {
+    final name      = _name.text.trim();
+    final email     = _email.text.trim();
+    final phone     = _phone.text.trim();
+    final shopName  = _shopName.text.trim();
+    final password  = _password.text;
+    final confirm   = _confirm.text;
+    final pin       = _pin.text.trim();
+    final pinConfirm = _pinConfirm.text.trim();
 
-  // STEP 1 → 2 ────────────────────────────────────────────────────────────────
-  Future<void> _submitForm() async {
-    final err = _validate();
-    if (err != null) { setState(() => _error = err); return; }
-    setState(() { _loading = true; _error = null; });
-    try {
-      final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: _email.text.trim(), password: _password.text,
-      );
-      final user = cred.user!;
-      await user.updateDisplayName(_ownerName.text.trim());
-      await user.sendEmailVerification();
-
-      _pendingUser      = user;
-      _pendingShopName  = _shopName.text.trim();
-      _pendingOwnerName = _ownerName.text.trim();
-      _pendingPhone     = '+91 ${_phone.text.trim().replaceAll(RegExp(r'[^0-9]'), '')}';
-      _pendingPin       = _pin.text;
-
-      setState(() { _step = _Step.verifyEmail; _loading = false; });
-      _startPolling();
-      _startCooldown();
-    } on FirebaseAuthException catch (e) {
-      setState(() { _error = _friendlyError(e); _loading = false; });
-    } catch (e) {
-      setState(() { _error = 'Sign up failed. Try again.'; _loading = false; });
+    // ── Validation ──────────────────────────────────────────────────────────
+    if ([name, email, shopName, password, confirm, pin, pinConfirm]
+        .any((s) => s.isEmpty)) {
+      setState(() => _error = 'Please fill all fields');
+      return;
     }
-  }
+    if (password.length < 6) {
+      setState(() => _error = 'Password must be at least 6 characters');
+      return;
+    }
+    if (password != confirm) {
+      setState(() => _error = 'Passwords do not match');
+      return;
+    }
+    if (pin.length != 4 || int.tryParse(pin) == null) {
+      setState(() => _error = 'PIN must be 4 digits');
+      return;
+    }
+    if (pin != pinConfirm) {
+      setState(() => _error = 'PINs do not match');
+      return;
+    }
 
-  void _startPolling() {
-    _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
-      await _checkVerified(silent: true);
-    });
-  }
+    setState(() { _loading = true; _error = null; });
 
-  void _startCooldown([int s = 60]) {
-    setState(() => _resendCooldown = s);
-    _cooldownTimer?.cancel();
-    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (_resendCooldown <= 1) { t.cancel(); if (mounted) setState(() => _resendCooldown = 0); }
-      else { if (mounted) setState(() => _resendCooldown--); }
-    });
-  }
-
-  Future<void> _resend() async {
-    if (_resendCooldown > 0) return;
-    setState(() => _loading = true);
     try {
-      await _pendingUser!.sendEmailVerification();
-      _startCooldown();
+      // ── Step 1: Create the auth account ───────────────────────────────────
+      //  signUp() does NOT establish a session when email confirmation is ON.
+      //  The user object is returned but auth.currentSession is null.
+      //  DO NOT attempt any DB inserts here — they will run as anon → 401.
+      final authResponse = await SupabaseService().client.auth.signUp(
+        email: email,
+        password: password,
+        data: {'displayName': name, 'role': 'super_admin'},
+      );
+
+      final user = authResponse.user;
+      if (user == null) {
+        setState(() => _error = 'Signup failed. Please try again.');
+        return;
+      }
+
+      // ── Step 2: Save onboarding data locally (no DB call yet) ─────────────
+      //  This data will be consumed by PendingOnboardingService.run()
+      //  the moment the user verifies their email and the session fires.
+      final shopId = 'shop_${DateTime.now().millisecondsSinceEpoch}';
+
+      await PendingOnboardingService.save(
+        shopId:     shopId,
+        ownerName:  name,
+        ownerEmail: email,
+        ownerPhone: phone,
+        shopName:   shopName,
+        ownerPin:   pin,
+      );
+
+      // ── Step 3: Show "check your email" screen ────────────────────────────
+      setState(() => _created = true);
+
+    } on AuthException catch (e) {
+      setState(() => _error = _friendlyMsg(e));
     } catch (e) {
-      if (mounted) setState(() => _error = 'Could not resend. Try again.');
+      setState(() => _error = 'Something went wrong. Try again.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _checkVerified({bool silent = false}) async {
-    if (!mounted) return;
-    if (!silent) setState(() { _loading = true; _error = null; });
-    try {
-      await _pendingUser!.reload();
-      final fresh = FirebaseAuth.instance.currentUser!;
-      if (fresh.emailVerified) {
-        _pollTimer?.cancel();
-        await _finalizeAccount(fresh);
-      } else if (!silent) {
-        setState(() {
-          _error = 'Email not verified yet. Check your inbox and click the link.';
-          _loading = false;
-        });
-      }
-    } catch (e) {
-      if (!silent && mounted) {
-        setState(() { _error = 'Check failed. Try again.'; _loading = false; });
-      }
-    }
-  }
-
-  // STEP 2 → 3: Write DB only after email verified ───────────────────────────
-  Future<void> _finalizeAccount(User user) async {
-    if (!mounted) return;
-    setState(() { _loading = true; _error = null; });
-    try {
-      final shopId = FirebaseDatabase.instance.ref('shops').push().key!;
-      await ShopOnboarding.initialize(
-        shopId:     shopId,
-        ownerUid:   user.uid,
-        ownerName:  _pendingOwnerName!,
-        ownerEmail: user.email!,
-        ownerPhone: _pendingPhone!,
-        shopName:   _pendingShopName!,
-        ownerPin:   _pendingPin!,
-      );
-      await ref.read(settingsProvider.notifier).loadFromFirebase(shopId);
-      if (!mounted) return;
-      setState(() { _step = _Step.done; _loading = false; });
-      await Future.delayed(const Duration(seconds: 2));
-      if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
-    } catch (e) {
-      if (mounted) setState(() { _error = 'Account setup failed: $e'; _loading = false; });
-    }
-  }
-
-  Future<void> _cancel() async {
-    _pollTimer?.cancel();
-    try { await _pendingUser?.delete(); } catch (_) {}
-    if (mounted) Navigator.of(context).pop();
-  }
-
-  String _friendlyError(FirebaseAuthException e) => switch (e.code) {
-    'email-already-in-use'  => 'An account already exists for this email.',
-    'weak-password'         => 'Password is too weak (min 8 characters).',
-    'invalid-email'         => 'Email address is not valid.',
-    'operation-not-allowed' => 'Email sign-up is not enabled. Contact support.',
-    _                       => e.message ?? 'Sign up failed.',
+  String _friendlyMsg(AuthException e) => switch (e.message) {
+    'User already registered'                      => 'This email already has an account.',
+    'Email already in use'                         => 'This email already has an account.',
+    'Password should be at least 6 characters'     => 'Password too short.',
+    _                                              => e.message,
   };
+
+  // ── UI ────────────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    if (_created) return _VerifyEmailScreen(email: _email.text.trim());
+
+    return Scaffold(
+      backgroundColor: C.bg,
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(children: [
+                  BackBtn(onTap: () => Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(builder: (_) => const LoginScreen()))),
+                  const SizedBox(width: 12),
+                  Text('Create your account',
+                      style: GoogleFonts.plusJakartaSans(
+                          fontSize: 18, fontWeight: FontWeight.w800, color: C.white)),
+                ]),
+                const SizedBox(height: 20),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: ErrBox(_error!),
+                  ),
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: C.bgCard,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: C.border),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const SectionHeading('Owner details', 'The main admin for your shop'),
+                      const SizedBox(height: 12),
+                      Row(children: [
+                        Expanded(child: AppField(label: 'Full name', hint: 'Jane Doe',
+                            controller: _name, required: true)),
+                        const SizedBox(width: 12),
+                        Expanded(child: AppField(label: 'Phone', hint: '+1 555-1234',
+                            controller: _phone, keyboardType: TextInputType.phone)),
+                      ]),
+                      const SizedBox(height: 12),
+                      AppField(label: 'Email address', hint: 'you@yourshop.com',
+                          controller: _email,
+                          keyboardType: TextInputType.emailAddress,
+                          required: true),
+                      const SizedBox(height: 16),
+                      Row(children: [
+                        Expanded(child: AppField(
+                            label: 'Password', hint: '••••••••',
+                            controller: _password,
+                            obscureText: !_showPassword,
+                            required: true,
+                            suffix: IconButton(
+                              icon: Icon(
+                                _showPassword
+                                    ? Icons.visibility_off_outlined
+                                    : Icons.visibility_outlined,
+                                size: 16, color: C.textMuted),
+                              onPressed: () =>
+                                  setState(() => _showPassword = !_showPassword)))),
+                        const SizedBox(width: 12),
+                        Expanded(child: AppField(
+                            label: 'Confirm password', hint: '••••••••',
+                            controller: _confirm,
+                            obscureText: !_showConfirm,
+                            required: true,
+                            suffix: IconButton(
+                              icon: Icon(
+                                _showConfirm
+                                    ? Icons.visibility_off_outlined
+                                    : Icons.visibility_outlined,
+                                size: 16, color: C.textMuted),
+                              onPressed: () =>
+                                  setState(() => _showConfirm = !_showConfirm)))),
+                      ]),
+                      const SizedBox(height: 20),
+                      const SectionHeading('Shop details', 'Your repair shop info'),
+                      const SizedBox(height: 12),
+                      AppField(label: 'Shop name', hint: 'Downtown Phone Repair',
+                          controller: _shopName, required: true),
+                      const SizedBox(height: 16),
+                      const SectionHeading('Owner PIN', 'Quick access for you and staff'),
+                      const SizedBox(height: 12),
+                      Row(children: [
+                        Expanded(child: AppField(
+                            label: '4-digit PIN', hint: '••••',
+                            controller: _pin,
+                            keyboardType: TextInputType.number,
+                            maxLength: 4, obscureText: true, required: true)),
+                        const SizedBox(width: 12),
+                        Expanded(child: AppField(
+                            label: 'Confirm PIN', hint: '••••',
+                            controller: _pinConfirm,
+                            keyboardType: TextInputType.number,
+                            maxLength: 4, obscureText: true, required: true)),
+                      ]),
+                      const SizedBox(height: 24),
+                      PBtn(
+                        label: _loading ? 'Creating account…' : 'Create account',
+                        icon: Icons.add_business_rounded,
+                        full: true,
+                        onTap: _loading ? null : _signUp,
+                      ),
+                      const SizedBox(height: 12),
+                      Center(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('Already have an account? ',
+                                style: GoogleFonts.inter(
+                                    fontSize: 12, color: C.textMuted)),
+                            GestureDetector(
+                              onTap: () => Navigator.of(context).pushReplacement(
+                                  MaterialPageRoute(
+                                      builder: (_) => const LoginScreen())),
+                              child: Text('Sign in',
+                                  style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 12,
+                                      color: C.primary,
+                                      fontWeight: FontWeight.w800)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  _VerifyEmailScreen  (replaces inline _created check)
+// ─────────────────────────────────────────────────────────────────────────────
+class _VerifyEmailScreen extends StatelessWidget {
+  final String email;
+  const _VerifyEmailScreen({required this.email});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: C.bg,
-      body: FadeTransition(
-        opacity: _fadeAnim,
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 480),
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 350),
-                child: switch (_step) {
-                  _Step.form        => _buildForm(),
-                  _Step.verifyEmail => _buildVerifyEmail(),
-                  _Step.done        => _buildDone(),
-                },
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildForm() {
-    return Column(
-      key: const ValueKey('form'),
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _AuthHeader(title: 'Create your shop', subtitle: 'Set up your TechFix Pro account'),
-        const SizedBox(height: 28),
-        Container(
+      body: Center(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: C.bgCard, borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: C.border),
-          ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            _StepDots(current: 0, total: 3),
-            const SizedBox(height: 20),
-            AppField(label: 'Shop Name', hint: 'e.g. iCare Repairs',
-                controller: _shopName, required: true),
-            AppField(label: 'Your Full Name', hint: 'e.g. Kavita Singh',
-                controller: _ownerName, required: true),
-            AppField(label: 'Email', hint: 'owner@shop.com',
-                controller: _email, keyboardType: TextInputType.emailAddress, required: true),
-            AppField(
-              label: 'Phone', hint: '9876543210',
-              controller: _phone, prefixText: '+91 ',
-              keyboardType: TextInputType.phone, required: true,
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-                LengthLimitingTextInputFormatter(10),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  width: 80, height: 80,
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(colors: [C.green, C.greenDark]),
+                    shape: BoxShape.circle,
+                    boxShadow: [BoxShadow(
+                        color: C.green.withValues(alpha: 0.3),
+                        blurRadius: 24,
+                        offset: const Offset(0, 8))],
+                  ),
+                  child: const Icon(Icons.mark_email_read_outlined,
+                      color: C.bg, size: 40),
+                ),
+                Text('Check your email',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                        color: C.white),
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 8),
+                Text(
+                  'We sent a verification link to\n$email\n\n'
+                  'Click the link in your email to finish setting up your shop. '
+                  'Your data will be saved automatically once verified.',
+                  style: GoogleFonts.inter(
+                      fontSize: 14, color: C.textMuted, height: 1.6),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 32),
+                PBtn(
+                  label: 'Back to sign in',
+                  full: true,
+                  onTap: () => Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(builder: (_) => const LoginScreen())),
+                ),
               ],
             ),
-            AppField(
-              label: 'Password', hint: 'Min 8 characters',
-              controller: _password, keyboardType: TextInputType.visiblePassword,
-              required: true, obscureText: !_showPassword,
-              suffix: IconButton(
-                icon: Icon(_showPassword ? Icons.visibility_off : Icons.visibility,
-                    size: 16, color: C.textMuted),
-                onPressed: () => setState(() => _showPassword = !_showPassword),
-              ),
-            ),
-            AppField(
-              label: '4-digit Staff PIN', hint: 'Your personal unlock PIN',
-              controller: _pin, keyboardType: TextInputType.number, required: true,
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-                LengthLimitingTextInputFormatter(4),
-              ],
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 8),
-              _AuthError(_error!),
-            ],
-            const SizedBox(height: 16),
-            PBtn(
-              label: _loading ? 'Creating account…' : 'Continue',
-              onTap: _loading ? null : _submitForm,
-              full: true, icon: Icons.arrow_forward_rounded,
-            ),
-            const SizedBox(height: 12),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text('Already have an account? Sign in',
-                  style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
-            ),
-          ]),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildVerifyEmail() {
-    final email = _pendingUser?.email ?? _email.text.trim();
-    return Column(
-      key: const ValueKey('verify'),
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _AuthHeader(title: 'Verify your email', subtitle: 'Check your inbox to continue'),
-        const SizedBox(height: 28),
-        Container(
-          padding: const EdgeInsets.all(28),
-          decoration: BoxDecoration(
-            color: C.bgCard, borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: C.border),
           ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            _StepDots(current: 1, total: 3),
-            const SizedBox(height: 28),
-
-            Center(child: Container(
-              width: 72, height: 72,
-              decoration: BoxDecoration(
-                color: C.primary.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-                border: Border.all(color: C.primary.withValues(alpha: 0.3), width: 2),
-              ),
-              child: const Icon(Icons.mark_email_unread_outlined,
-                  color: C.primary, size: 34),
-            )),
-            const SizedBox(height: 20),
-
-            Text('Check your inbox', textAlign: TextAlign.center,
-                style: GoogleFonts.syne(fontSize: 18, fontWeight: FontWeight.w800, color: C.white)),
-            const SizedBox(height: 8),
-            Text('We sent a verification link to', textAlign: TextAlign.center,
-                style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
-            const SizedBox(height: 4),
-            Text(email, textAlign: TextAlign.center,
-                style: GoogleFonts.syne(fontSize: 14, fontWeight: FontWeight.w700, color: C.primary)),
-            const SizedBox(height: 8),
-            Text('Click the link in the email, then tap the button below.',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.syne(fontSize: 12, color: C.textMuted, height: 1.5)),
-
-            const SizedBox(height: 16),
-            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              SizedBox(width: 14, height: 14, child: CircularProgressIndicator(
-                  strokeWidth: 2, color: C.primary.withValues(alpha: 0.5))),
-              const SizedBox(width: 8),
-              Text('Checking automatically…',
-                  style: GoogleFonts.syne(fontSize: 11, color: C.textMuted)),
-            ]),
-
-            if (_error != null) ...[const SizedBox(height: 16), _AuthError(_error!)],
-
-            const SizedBox(height: 24),
-            PBtn(
-              label: _loading ? 'Checking…' : "I've verified my email ✓",
-              onTap: _loading ? null : () => _checkVerified(),
-              full: true, icon: Icons.verified_outlined,
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: _resendCooldown > 0 || _loading ? null : _resend,
-              icon: const Icon(Icons.refresh_rounded, size: 16),
-              label: Text(
-                _resendCooldown > 0 ? 'Resend in ${_resendCooldown}s' : 'Resend email',
-                style: GoogleFonts.syne(fontSize: 13, fontWeight: FontWeight.w600),
-              ),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: C.textMuted,
-                side: BorderSide(color: C.border),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Divider(color: C.border.withValues(alpha: 0.5)),
-            const SizedBox(height: 10),
-            Row(children: [
-              const Icon(Icons.info_outline_rounded, size: 13, color: C.textMuted),
-              const SizedBox(width: 8),
-              Expanded(child: Text("Can't find it? Check your spam / junk folder.",
-                  style: GoogleFonts.syne(fontSize: 11, color: C.textMuted, height: 1.4))),
-            ]),
-            const SizedBox(height: 10),
-            TextButton(
-              onPressed: _cancel,
-              child: Text('Cancel registration',
-                  style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
-            ),
-          ]),
         ),
-      ],
+      ),
     );
   }
-
-  Widget _buildDone() {
-    return Container(
-      key: const ValueKey('done'),
-      padding: const EdgeInsets.all(40),
-      decoration: BoxDecoration(
-        color: C.bgCard, borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: C.green.withValues(alpha: 0.3)),
-      ),
-      child: Column(children: [
-        _StepDots(current: 2, total: 3),
-        const SizedBox(height: 32),
-        Container(
-          width: 72, height: 72,
-          decoration: BoxDecoration(
-            color: C.green.withValues(alpha: 0.1), shape: BoxShape.circle),
-          child: const Icon(Icons.check_circle_rounded, color: C.green, size: 40),
-        ),
-        const SizedBox(height: 20),
-        Text("You're all set!", style: GoogleFonts.syne(
-            fontSize: 20, fontWeight: FontWeight.w800, color: C.white)),
-        const SizedBox(height: 8),
-        Text('Setting up your shop…', style: GoogleFonts.syne(
-            fontSize: 13, color: C.textMuted)),
-        const SizedBox(height: 24),
-        const CircularProgressIndicator(),
-      ]),
-    );
-  }
-}
-
-// ── Shared auth widgets ───────────────────────────────────────────────────────
-
-class _AuthHeader extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  const _AuthHeader({required this.title, required this.subtitle});
-
-  @override
-  Widget build(BuildContext context) => Column(children: [
-    Container(
-      width: 56, height: 56,
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [C.primary, C.primaryDark],
-            begin: Alignment.topLeft, end: Alignment.bottomRight),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: C.primary.withValues(alpha: 0.3),
-            blurRadius: 20, offset: const Offset(0, 6))],
-      ),
-      child: Center(child: Text('T', style: GoogleFonts.syne(
-          fontWeight: FontWeight.w900, fontSize: 24, color: C.bg))),
-    ),
-    const SizedBox(height: 12),
-    Text(title, style: GoogleFonts.syne(
-        fontSize: 22, fontWeight: FontWeight.w800, color: C.white)),
-    const SizedBox(height: 4),
-    Text(subtitle, style: GoogleFonts.syne(fontSize: 13, color: C.textMuted)),
-  ]);
-}
-
-class _StepDots extends StatelessWidget {
-  final int current;
-  final int total;
-  const _StepDots({required this.current, required this.total});
-
-  @override
-  Widget build(BuildContext context) => Row(
-    mainAxisAlignment: MainAxisAlignment.center,
-    children: List.generate(total, (i) {
-      final active = i == current;
-      final done   = i < current;
-      return AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        width: active ? 24 : 8, height: 8,
-        decoration: BoxDecoration(
-          color: done ? C.green : active ? C.primary : C.border,
-          borderRadius: BorderRadius.circular(4),
-        ),
-      );
-    }),
-  );
-}
-
-class _AuthError extends StatelessWidget {
-  final String message;
-  const _AuthError(this.message);
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-    decoration: BoxDecoration(
-      color: C.red.withValues(alpha: 0.08),
-      borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: C.red.withValues(alpha: 0.2)),
-    ),
-    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Icon(Icons.error_outline, color: C.red, size: 14),
-      const SizedBox(width: 8),
-      Expanded(child: Text(message, style: GoogleFonts.syne(
-          fontSize: 12, color: C.red, fontWeight: FontWeight.w600, height: 1.4))),
-    ]),
-  );
 }

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -24,14 +25,14 @@ class Pill extends StatelessWidget {
       color: color.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(99),
       border: Border.all(color: color.withValues(alpha: 0.4)),
     ),
-    child: Text(text, style: GoogleFonts.syne(
+    child: Text(text, style: GoogleFonts.inter(
         fontSize: small ? 10 : 11, fontWeight: FontWeight.w700,
         color: color, letterSpacing: 0.3)),
   );
 }
 
 // ── Surface Card ──────────────────────────────────────────────
-class SCard extends StatelessWidget {
+class SCard extends ConsumerWidget {
   final Widget child;
   final EdgeInsets? padding;
   final EdgeInsets? margin;
@@ -43,29 +44,32 @@ class SCard extends StatelessWidget {
       this.glowColor, this.borderColor, this.onTap, this.onLongPress});
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: margin ?? EdgeInsets.zero,
-    child: GestureDetector(
-      onTap: onTap,
-      onLongPress: onLongPress,
-      child: Container(
-        width: double.infinity,
-        padding: padding ?? const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: C.bgCard, borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: borderColor ?? glowColor?.withValues(alpha: 0.4) ?? C.border),
-          boxShadow: glowColor != null
-              ? [BoxShadow(color: glowColor!.withValues(alpha: 0.1), blurRadius: 20, spreadRadius: -4)]
-              : [const BoxShadow(color: Color(0x22000000), blurRadius: 8)],
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = ref.watch(appThemeProvider);
+    return Padding(
+      padding: margin ?? EdgeInsets.zero,
+      child: GestureDetector(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: Container(
+          width: double.infinity,
+          padding: padding ?? const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: theme.bgCard, borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: borderColor ?? glowColor?.withValues(alpha: 0.4) ?? theme.border),
+            boxShadow: glowColor != null
+                ? [BoxShadow(color: glowColor!.withValues(alpha: 0.1), blurRadius: 20, spreadRadius: -4)]
+                : [const BoxShadow(color: Color(0x22000000), blurRadius: 8)],
+          ),
+          child: child,
         ),
-        child: child,
       ),
-    ),
-  );
+    );
+  }
 }
 
 // ── KPI Card ──────────────────────────────────────────────────
-class KpiCard extends StatelessWidget {
+class KpiCard extends ConsumerWidget {
   final String icon;
   final String value;
   final String label;
@@ -76,93 +80,96 @@ class KpiCard extends StatelessWidget {
       this.sub = '', this.color = C.primary, this.onTap});
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) {
-      final w = constraints.maxWidth;
-      final compact = w < 340;
-      final padding = EdgeInsets.all(compact ? 10 : 14);
-      final iconSize = compact ? 18.0 : 22.0;
-      final valueSize = compact ? 18.0 : 22.0;
-      final labelSize = compact ? 11.0 : 12.0;
-      final subFontSize = compact ? 9.0 : 10.0;
-      final gapTop = compact ? 6.0 : 8.0;
-      final gapMid = compact ? 1.0 : 2.0;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = ref.watch(appThemeProvider);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final compact = w < 340;
+        final padding = EdgeInsets.all(compact ? 10 : 14);
+        final iconSize = compact ? 18.0 : 22.0;
+        final valueSize = compact ? 18.0 : 22.0;
+        final labelSize = compact ? 11.0 : 12.0;
+        final subFontSize = compact ? 9.0 : 10.0;
+        final gapTop = compact ? 6.0 : 8.0;
+        final gapMid = compact ? 1.0 : 2.0;
 
-      return GestureDetector(
-        onTap: onTap,
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: compact ? 260 : 280,
-            ),
-            child: Container(
-              padding: padding,
-              decoration: BoxDecoration(
-                color: C.bgCard,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: C.border),
-                boxShadow: [
-                  BoxShadow(
-                    color: color.withValues(alpha: 0.08),
-                    blurRadius: 16,
-                  ),
-                ],
+        return GestureDetector(
+          onTap: onTap,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: compact ? 260 : 280,
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(icon, style: TextStyle(fontSize: iconSize)),
-                      if (sub.isNotEmpty)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: color.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(99),
-                          ),
-                          child: Text(
-                            sub,
-                            style: GoogleFonts.syne(
-                              fontSize: subFontSize,
-                              fontWeight: FontWeight.w700,
-                              color: color,
+              child: Container(
+                padding: padding,
+                decoration: BoxDecoration(
+                  color: theme.bgCard,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: theme.border),
+                  boxShadow: [
+                    BoxShadow(
+                      color: color.withValues(alpha: 0.08),
+                      blurRadius: 16,
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(icon, style: TextStyle(fontSize: iconSize)),
+                        if (sub.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: color.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(99),
+                            ),
+                            child: Text(
+                              sub,
+                              style: GoogleFonts.inter(
+                                fontSize: subFontSize,
+                                fontWeight: FontWeight.w700,
+                                color: color,
+                              ),
                             ),
                           ),
-                        ),
-                    ],
-                  ),
-                  SizedBox(height: gapTop),
-                  Text(
-                    value,
-                    style: GoogleFonts.syne(
-                      fontSize: valueSize,
-                      fontWeight: FontWeight.w800,
-                      color: C.white,
+                      ],
                     ),
-                  ),
-                  SizedBox(height: gapMid),
-                  Text(
-                    label,
-                    style: GoogleFonts.syne(
-                      fontSize: labelSize,
-                      color: C.textMuted,
+                    SizedBox(height: gapTop),
+                    Text(
+                      value,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: valueSize,
+                        fontWeight: FontWeight.w800,
+                        color: theme.white,
+                      ),
                     ),
-                  ),
-                ],
+                    SizedBox(height: gapMid),
+                    Text(
+                      label,
+                      style: GoogleFonts.inter(
+                        fontSize: labelSize,
+                        color: theme.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-      );
-    },
-  );
+        );
+      },
+    );
+  }
 }
 
 // ── Section label ─────────────────────────────────────────────
@@ -178,7 +185,7 @@ class SLabel extends StatelessWidget {
           gradient: LinearGradient(
               colors: [C.primary.withValues(alpha: 0.4), Colors.transparent])))),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: Text(text, style: GoogleFonts.syne(
+          child: Text(text, style: GoogleFonts.plusJakartaSans(
               fontSize: 11, fontWeight: FontWeight.w800,
               color: C.primary, letterSpacing: 1.5))),
       Expanded(child: Container(height: 1, decoration: BoxDecoration(
@@ -188,8 +195,58 @@ class SLabel extends StatelessWidget {
   );
 }
 
+// ── Back Button ───────────────────────────────────────────────
+class BackBtn extends ConsumerWidget {
+  final VoidCallback? onTap;
+  const BackBtn({super.key, this.onTap});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = ref.watch(appThemeProvider);
+    return IconButton(
+      onPressed: onTap,
+      icon: Icon(Icons.arrow_back_outlined, color: theme.white, size: 24),
+      style: IconButton.styleFrom(backgroundColor: theme.bgCard, padding: const EdgeInsets.all(12)),
+    );
+  }
+}
+
+// ── Error Box ─────────────────────────────────────────────────
+class ErrBox extends StatelessWidget {
+  final String message;
+  const ErrBox(this.message, {super.key});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(color: C.red.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10), border: Border.all(color: C.red.withValues(alpha: 0.4))),
+    child: Row(children: [
+      const Icon(Icons.error_outline_outlined, color: C.red, size: 20),
+      const SizedBox(width: 10),
+      Expanded(child: Text(message, style: GoogleFonts.inter(fontSize: 13, color: C.red, fontWeight: FontWeight.w600))),
+    ]),
+  );
+}
+
+// ── Section Heading ───────────────────────────────────────────
+class SectionHeading extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  const SectionHeading(this.title, this.subtitle, {super.key});
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(title, style: GoogleFonts.plusJakartaSans(fontSize: 14, fontWeight: FontWeight.w800, color: C.white)),
+      if (subtitle.isNotEmpty) const SizedBox(height: 4),
+      if (subtitle.isNotEmpty) Text(subtitle, style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
+    ],
+  );
+}
+
 // ── AppField ──────────────────────────────────────────────────
-class AppField extends StatelessWidget {
+class AppField extends ConsumerWidget {
   final String label;
   final String? hint;
   final TextEditingController? controller;
@@ -197,6 +254,7 @@ class AppField extends StatelessWidget {
   final String? prefixText;
   final TextInputType? keyboardType;
   final int maxLines;
+  final int? maxLength;
   final bool required;
   final List<TextInputFormatter>? inputFormatters;
   final bool readOnly;
@@ -206,41 +264,45 @@ class AppField extends StatelessWidget {
 
   const AppField({
     super.key, required this.label, this.hint, this.controller, this.onChanged,
-    this.prefixText, this.keyboardType, this.maxLines = 1, this.required = false,
-    this.inputFormatters, this.readOnly = false, this.obscureText = false,
-    this.onTap, this.suffix,
+    this.prefixText, this.keyboardType, this.maxLines = 1, this.maxLength,
+    this.required = false, this.inputFormatters, this.readOnly = false,
+    this.obscureText = false, this.onTap, this.suffix,
   });
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      RichText(text: TextSpan(
-        text: label.toUpperCase(),
-        style: GoogleFonts.syne(fontSize: 10, fontWeight: FontWeight.w700,
-            color: C.textMuted, letterSpacing: 0.5),
-        children: required ? [TextSpan(text: ' *', style: GoogleFonts.syne(color: C.accent))] : [],
-      )),
-      const SizedBox(height: 5),
-      TextFormField(
-        controller: controller, onChanged: onChanged, keyboardType: keyboardType,
-        maxLines: maxLines, inputFormatters: inputFormatters,
-        readOnly: readOnly, onTap: onTap, obscureText: obscureText,
-        style: GoogleFonts.syne(fontSize: 13, color: C.text),
-        decoration: InputDecoration(
-          hintText: hint,
-          prefixText: prefixText,
-          prefixStyle: GoogleFonts.syne(color: C.textMuted, fontSize: 13),
-          suffixIcon: suffix,
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = ref.watch(appThemeProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        RichText(text: TextSpan(
+          text: label.toUpperCase(),
+          style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w700,
+              color: theme.textMuted, letterSpacing: 0.5),
+          children: required ? [TextSpan(text: ' *', style: GoogleFonts.inter(color: C.accent))] : [],
+        )),
+        const SizedBox(height: 5),
+        TextFormField(
+          controller: controller, onChanged: onChanged, keyboardType: keyboardType,
+          maxLines: maxLines, maxLength: maxLength, inputFormatters: inputFormatters,
+          readOnly: readOnly, onTap: onTap, obscureText: obscureText,
+          style: GoogleFonts.inter(fontSize: 13, color: theme.text),
+          decoration: InputDecoration(
+            hintText: hint,
+            prefixText: prefixText,
+            prefixStyle: GoogleFonts.inter(color: theme.textMuted, fontSize: 13),
+            suffixIcon: suffix,
+            counterText: '',
+          ),
         ),
-      ),
-      const SizedBox(height: 12),
-    ],
-  );
+        const SizedBox(height: 12),
+      ],
+    );
+  }
 }
 
 // ── AppDropdown ───────────────────────────────────────────────
-class AppDropdown<T> extends StatelessWidget {
+class AppDropdown<T> extends ConsumerWidget {
   final String label;
   final T value;
   final List<DropdownMenuItem<T>> items;
@@ -249,27 +311,30 @@ class AppDropdown<T> extends StatelessWidget {
       required this.items, required this.onChanged});
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(label.toUpperCase(), style: GoogleFonts.syne(fontSize: 10,
-          fontWeight: FontWeight.w700, color: C.textMuted, letterSpacing: 0.5)),
-      const SizedBox(height: 5),
-      DropdownButtonFormField<T>(
-        // Guard: only set initialValue if it exists exactly once in items
-        initialValue: (() {
-          final matches = items.where((i) => i.value == value).length;
-          return matches == 1 ? value : null;
-        })(),
-        onChanged: onChanged, items: items,
-        dropdownColor: C.bgElevated,
-        style: GoogleFonts.syne(fontSize: 13, color: C.text),
-        decoration: const InputDecoration(),
-        isExpanded: true,
-      ),
-      const SizedBox(height: 12),
-    ],
-  );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = ref.watch(appThemeProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label.toUpperCase(), style: GoogleFonts.inter(fontSize: 10,
+            fontWeight: FontWeight.w700, color: theme.textMuted, letterSpacing: 0.5)),
+        const SizedBox(height: 5),
+        DropdownButtonFormField<T>(
+          // Guard: only set initialValue if it exists exactly once in items
+          initialValue: (() {
+            final matches = items.where((i) => i.value == value).length;
+            return matches == 1 ? value : null;
+          })(),
+          onChanged: onChanged, items: items,
+          dropdownColor: theme.bgElevated,
+          style: GoogleFonts.inter(fontSize: 13, color: theme.text),
+          decoration: const InputDecoration(),
+          isExpanded: true,
+        ),
+        const SizedBox(height: 12),
+      ],
+    );
+  }
 }
 
 // ── Primary Button ────────────────────────────────────────────
@@ -293,8 +358,8 @@ class PBtn extends StatelessWidget {
         onPressed: onTap,
         style: ElevatedButton.styleFrom(
           backgroundColor: outline ? Colors.transparent : c,
-          foregroundColor: outline ? c : C.bg,
-          side: BorderSide(color: onTap == null ? C.border : c, width: 2),
+          foregroundColor: outline ? c : Colors.white,
+          side: BorderSide(color: onTap == null ? C.borderLight : c, width: 2),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           padding: small
               ? const EdgeInsets.symmetric(horizontal: 16, vertical: 8)
@@ -303,9 +368,9 @@ class PBtn extends StatelessWidget {
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           if (icon != null) ...[Icon(icon, size: 16), const SizedBox(width: 6)],
-          Text(label, style: GoogleFonts.syne(
+          Text(label, style: GoogleFonts.plusJakartaSans(
               fontSize: small ? 12 : 14, fontWeight: FontWeight.w800,
-              letterSpacing: 0.3)),
+              letterSpacing: 0.3, color: outline ? c : Colors.white)),
         ]),
       ),
     );
@@ -316,13 +381,22 @@ class PBtn extends StatelessWidget {
 //  PHOTO PICKER WIDGET — Camera + Gallery with real image_picker
 // ═══════════════════════════════════════════════════════════════
 
-/// Callback returns the file path string of the newly picked image
-typedef OnPhotoPicked = void Function(String path);
+/// Callback returns the XFile of the newly picked image
+typedef OnPhotoPicked = void Function(XFile file);
 
-/// Shows bottom sheet to pick camera or gallery, returns file path
-Future<String?> pickPhoto(BuildContext context) async {
-  String? result;
-  await showModalBottomSheet<void>(
+/// Shows bottom sheet to pick camera or gallery, returns XFile.
+///
+/// FIX: The original used showModalBottomSheet<void> and set a local `result`
+/// variable inside the builder closure — but showModalBottomSheet resolves as
+/// soon as the sheet is dismissed (Navigator.pop), which happens BEFORE
+/// ImagePicker finishes. So `result` was always null when pickPhoto() returned.
+///
+/// Fix: use showModalBottomSheet<ImageSource> to return the chosen source
+/// from the sheet itself (synchronously on tap), then call ImagePicker
+/// AFTER the sheet has fully closed — in the correct async scope.
+Future<XFile?> pickPhoto(BuildContext context) async {
+  // Step 1: Ask user which source they want (sheet returns the choice)
+  final source = await showModalBottomSheet<ImageSource>(
     context: context,
     backgroundColor: Colors.transparent,
     builder: (ctx) => Container(
@@ -339,28 +413,19 @@ Future<String?> pickPhoto(BuildContext context) async {
             decoration: BoxDecoration(color: C.border,
                 borderRadius: BorderRadius.circular(99))),
         const SizedBox(height: 16),
-        Text('Add Photo', style: GoogleFonts.syne(
+        Text('Add Photo', style: GoogleFonts.plusJakartaSans(
             fontWeight: FontWeight.w800, fontSize: 17, color: C.white)),
         const SizedBox(height: 6),
-        Text('Choose a source', style: GoogleFonts.syne(
+        Text('Choose a source', style: GoogleFonts.inter(
             fontSize: 13, color: C.textMuted)),
         const SizedBox(height: 20),
-        // Camera option
+        // Camera option — pops sheet with the chosen source
         _PhotoOption(
           icon: Icons.camera_alt_rounded,
           iconColor: C.primary,
           label: 'Take Photo',
           sub: 'Open camera now',
-          onTap: () async {
-            Navigator.of(ctx).pop();
-            final img = await ImagePicker().pickImage(
-              source: ImageSource.camera,
-              imageQuality: 85,
-              maxWidth: 1920,
-              maxHeight: 1920,
-            );
-            result = img?.path;
-          },
+          onTap: () => Navigator.of(ctx).pop(ImageSource.camera),
         ),
         const Divider(color: C.border, height: 1, indent: 16, endIndent: 16),
         // Gallery option
@@ -369,19 +434,10 @@ Future<String?> pickPhoto(BuildContext context) async {
           iconColor: C.accent,
           label: 'Choose from Gallery',
           sub: 'Select an existing photo',
-          onTap: () async {
-            Navigator.of(ctx).pop();
-            final img = await ImagePicker().pickImage(
-              source: ImageSource.gallery,
-              imageQuality: 85,
-              maxWidth: 1920,
-              maxHeight: 1920,
-            );
-            result = img?.path;
-          },
+          onTap: () => Navigator.of(ctx).pop(ImageSource.gallery),
         ),
         const SizedBox(height: 8),
-        // Cancel
+        // Cancel — pops with null (no source chosen)
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
           child: SizedBox(width: double.infinity,
@@ -391,7 +447,7 @@ Future<String?> pickPhoto(BuildContext context) async {
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
-              child: Text('Cancel', style: GoogleFonts.syne(
+              child: Text('Cancel', style: GoogleFonts.inter(
                   fontWeight: FontWeight.w700, fontSize: 14, color: C.textMuted)),
             ),
           ),
@@ -399,7 +455,17 @@ Future<String?> pickPhoto(BuildContext context) async {
       ]),
     ),
   );
-  return result;
+
+  // Step 2: Sheet is fully dismissed. Now launch ImagePicker with the chosen source.
+  // This is the correct place — ImagePicker MUST be called after the sheet is gone
+  // so it can present its own UI (camera/gallery) on top of a clean navigator stack.
+  if (source == null) return null;   // user tapped Cancel
+  return ImagePicker().pickImage(
+    source: source,
+    imageQuality: 85,
+    maxWidth: 1920,
+    maxHeight: 1920,
+  );
 }
 
 class _PhotoOption extends StatelessWidget {
@@ -423,9 +489,9 @@ class _PhotoOption extends StatelessWidget {
           child: Icon(icon, color: iconColor, size: 26)),
         const SizedBox(width: 14),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(label, style: GoogleFonts.syne(
+          Text(label, style: GoogleFonts.inter(
               fontWeight: FontWeight.w700, fontSize: 15, color: C.white)),
-          Text(sub, style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+          Text(sub, style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
         ])),
         const Icon(Icons.chevron_right, color: C.textDim),
       ]),
@@ -440,14 +506,14 @@ class _PhotoOption extends StatelessWidget {
 //    • uploadProgress (double?) — inline progress bar + % text
 //    • onPhotoAdded nullable    — pass null while uploading to lock strip
 //    • tapping a tile opens a swipeable full-screen gallery (not single view)
-//    • cloud badge on Firebase Storage URLs
+//    • cloud badge on storage URLs
 // ─────────────────────────────────────────────────────────────
 class PhotoRow extends StatelessWidget {
   final List<String> photos;
   final String label;
 
   /// Nullable — pass null while uploading to disable add/delete
-  final Function(String path)? onPhotoAdded;
+  final Function(XFile file)? onPhotoAdded;
   final Function(int index)? onPhotoRemoved;
   final bool canDelete;
 
@@ -473,11 +539,11 @@ class PhotoRow extends StatelessWidget {
       // ── Label + count ──────────────────────────────────────
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         if (label.isNotEmpty)
-          Text(label.toUpperCase(), style: GoogleFonts.syne(
+          Text(label.toUpperCase(), style: GoogleFonts.inter(
               fontSize: 10, fontWeight: FontWeight.w700,
               color: C.textMuted, letterSpacing: 0.5)),
         Text('${photos.length} photo${photos.length == 1 ? "" : "s"}',
-            style: GoogleFonts.syne(fontSize: 10, color: C.textMuted)),
+            style: GoogleFonts.inter(fontSize: 10, color: C.textMuted)),
       ]),
       const SizedBox(height: 8),
 
@@ -501,8 +567,8 @@ class PhotoRow extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Text(
-            'Uploading… ${((uploadProgress ?? 0) * 100).toStringAsFixed(0)}%  •  compressing <100 KB',
-            style: GoogleFonts.syne(fontSize: 11, color: C.textMuted),
+            'Uploading… ${((uploadProgress ?? 0) * 100).toStringAsFixed(0)}%',
+            style: GoogleFonts.inter(fontSize: 11, color: C.textMuted),
           ),
         ]),
         const SizedBox(height: 8),
@@ -525,8 +591,8 @@ class PhotoRow extends StatelessWidget {
             onTap: _locked || onPhotoAdded == null
                 ? null
                 : () async {
-                    final path = await pickPhoto(context);
-                    if (path != null) onPhotoAdded!(path);
+                    final file = await pickPhoto(context);
+                    if (file != null) onPhotoAdded!(file);
                   },
             child: Container(
               width: 80, height: 80, margin: const EdgeInsets.only(right: 8),
@@ -550,7 +616,7 @@ class PhotoRow extends StatelessWidget {
                           color: onPhotoAdded == null ? C.textDim : C.primary,
                           size: 26),
                       const SizedBox(height: 4),
-                      Text('Add Photo', style: GoogleFonts.syne(
+                      Text('Add Photo', style: GoogleFonts.inter(
                           fontSize: 9,
                           color: onPhotoAdded == null ? C.textDim : C.primary,
                           fontWeight: FontWeight.w700)),
@@ -708,7 +774,7 @@ class _PhotoGalleryState extends State<_PhotoGallery> {
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: Text('${_cur + 1} / ${photos.length}',
-            style: GoogleFonts.syne(fontSize: 14, color: Colors.white70)),
+            style: GoogleFonts.inter(fontSize: 14, color: Colors.white70)),
         centerTitle: true,
       ),
       body: PageView.builder(
@@ -758,7 +824,7 @@ class _PhotoGalleryState extends State<_PhotoGallery> {
       const Icon(Icons.broken_image_outlined, color: Colors.white38, size: 48),
       const SizedBox(height: 12),
       Text('Could not load image',
-          style: GoogleFonts.syne(color: Colors.white38, fontSize: 13)),
+          style: GoogleFonts.inter(color: Colors.white38, fontSize: 13)),
     ],
   );
 }
@@ -786,7 +852,7 @@ class StatusProgress extends StatelessWidget {
         child: Row(children: [
           Text(C.statusIcon(status), style: const TextStyle(fontSize: 14)),
           const SizedBox(width: 8),
-          Text('Job $status', style: GoogleFonts.syne(
+          Text('Job $status', style: GoogleFonts.inter(
               fontSize: 12, fontWeight: FontWeight.w700,
               color: C.statusColor(status))),
         ]),
@@ -807,10 +873,10 @@ class StatusProgress extends StatelessWidget {
       ))),
       const SizedBox(height: 4),
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text('Checked In', style: GoogleFonts.syne(fontSize: 9, color: C.textMuted)),
+        Text('Checked In', style: GoogleFonts.inter(fontSize: 9, color: C.textMuted)),
         Text('${idx + 1}/${_order.length}',
-            style: GoogleFonts.syne(fontSize: 9, color: color, fontWeight: FontWeight.w700)),
-        Text('Completed', style: GoogleFonts.syne(fontSize: 9, color: C.textMuted)),
+            style: GoogleFonts.inter(fontSize: 9, color: color, fontWeight: FontWeight.w700)),
+        Text('Completed', style: GoogleFonts.inter(fontSize: 9, color: C.textMuted)),
       ]),
     ]);
   }
@@ -839,9 +905,9 @@ class CostSummary extends StatelessWidget {
         _row('GST ${taxRate.toStringAsFixed(0)}%', tax),
         const Divider(color: C.border, height: 20),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Text('TOTAL', style: GoogleFonts.syne(
+          Text('TOTAL', style: GoogleFonts.plusJakartaSans(
               fontWeight: FontWeight.w800, fontSize: 16, color: C.white)),
-          Text(fmtMoney(total), style: GoogleFonts.syne(
+          Text(fmtMoney(total), style: GoogleFonts.plusJakartaSans(
               fontWeight: FontWeight.w800, fontSize: 18, color: C.green)),
         ]),
       ]),
@@ -851,9 +917,9 @@ class CostSummary extends StatelessWidget {
   Widget _row(String l, double v, {Color? color}) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 3),
     child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-      Text(l, style: GoogleFonts.syne(fontSize: 12, color: C.textMuted)),
+      Text(l, style: GoogleFonts.inter(fontSize: 12, color: C.textMuted)),
       Text(v < 0 ? '-${fmtMoney(-v)}' : fmtMoney(v),
-          style: GoogleFonts.syne(fontSize: 12, color: color ?? C.text)),
+          style: GoogleFonts.inter(fontSize: 12, color: color ?? C.text)),
     ]),
   );
 }
@@ -876,7 +942,7 @@ Future<String?> showReasonDialog(BuildContext context, {
       title: Row(children: [
         Text(icon, style: const TextStyle(fontSize: 22)),
         const SizedBox(width: 10),
-        Expanded(child: Text(title, style: GoogleFonts.syne(
+        Expanded(child: Text(title, style: GoogleFonts.plusJakartaSans(
             fontWeight: FontWeight.w800, fontSize: 16, color: C.white))),
       ]),
       content: SingleChildScrollView(child: Column(
@@ -884,7 +950,7 @@ Future<String?> showReasonDialog(BuildContext context, {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (presets.isNotEmpty) ...[
-            Text('Quick Reasons', style: GoogleFonts.syne(
+            Text('Quick Reasons', style: GoogleFonts.inter(
                 fontSize: 11, color: C.textMuted, fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             Wrap(spacing: 6, runSpacing: 6, children: presets.map((p) => GestureDetector(
@@ -896,7 +962,7 @@ Future<String?> showReasonDialog(BuildContext context, {
                   borderRadius: BorderRadius.circular(99),
                   border: Border.all(color: selected == p ? color : C.border),
                 ),
-                child: Text(p, style: GoogleFonts.syne(
+                child: Text(p, style: GoogleFonts.inter(
                     fontSize: 11,
                     color: selected == p ? color : C.textMuted,
                     fontWeight: FontWeight.w600)),
@@ -904,20 +970,20 @@ Future<String?> showReasonDialog(BuildContext context, {
             )).toList()),
             const SizedBox(height: 12),
           ],
-          Text('Custom Reason', style: GoogleFonts.syne(
+          Text('Custom Reason', style: GoogleFonts.inter(
               fontSize: 11, color: C.textMuted, fontWeight: FontWeight.w700)),
           const SizedBox(height: 6),
           TextFormField(
             controller: ctrl, maxLines: 3,
             onChanged: (_) => ss(() => selected = null),
-            style: GoogleFonts.syne(fontSize: 13, color: C.text),
+            style: GoogleFonts.inter(fontSize: 13, color: C.text),
             decoration: InputDecoration(hintText: hint),
           ),
         ],
       )),
       actions: [
         TextButton(onPressed: () => Navigator.of(ctx).pop(),
-            child: Text('Cancel', style: GoogleFonts.syne(color: C.textMuted))),
+            child: Text('Cancel', style: GoogleFonts.inter(color: C.textMuted))),
         ElevatedButton(
           onPressed: () {
             final reason = ctrl.text.trim().isEmpty ? selected : ctrl.text.trim();
@@ -925,7 +991,7 @@ Future<String?> showReasonDialog(BuildContext context, {
           },
           style: ElevatedButton.styleFrom(backgroundColor: color, foregroundColor: C.bg,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-          child: Text('Confirm', style: GoogleFonts.syne(fontWeight: FontWeight.w800)),
+          child: Text('Confirm', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
         ),
       ],
     )),
@@ -933,7 +999,7 @@ Future<String?> showReasonDialog(BuildContext context, {
 }
 
 // ── Settings Tile ─────────────────────────────────────────────
-class SettingsTile extends StatelessWidget {
+class SettingsTile extends ConsumerWidget {
   final String icon;
   final String title;
   final String subtitle;
@@ -946,67 +1012,73 @@ class SettingsTile extends StatelessWidget {
       this.isDestructive = false});
 
   @override
-  Widget build(BuildContext context) => InkWell(
-    onTap: onTap,
-    borderRadius: BorderRadius.circular(10),
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(children: [
-        Container(
-          width: 42, height: 42,
-          decoration: BoxDecoration(
-            color: iconBg ?? (isDestructive
-                ? C.red.withValues(alpha: 0.1) : C.primary.withValues(alpha: 0.1)),
-            borderRadius: BorderRadius.circular(11),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = ref.watch(appThemeProvider);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Row(children: [
+          Container(
+            width: 42, height: 42,
+            decoration: BoxDecoration(
+              color: iconBg ?? (isDestructive
+                  ? C.red.withValues(alpha: 0.1) : C.primary.withValues(alpha: 0.1)),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Center(child: Text(icon, style: const TextStyle(fontSize: 20))),
           ),
-          child: Center(child: Text(icon, style: const TextStyle(fontSize: 20))),
-        ),
-        const SizedBox(width: 12),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: GoogleFonts.syne(
-              fontWeight: FontWeight.w600, fontSize: 14,
-              color: isDestructive ? C.red : C.text)),
-          if (subtitle.isNotEmpty) Text(subtitle, style: GoogleFonts.syne(
-              fontSize: 12, color: C.textMuted, height: 1.4)),
-        ])),
-        trailing ?? (onTap != null
-            ? const Icon(Icons.chevron_right, color: C.textDim, size: 20)
-            : const SizedBox.shrink()),
-      ]),
-    ),
-  );
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: GoogleFonts.inter(
+                fontWeight: FontWeight.w600, fontSize: 14,
+                color: isDestructive ? C.red : theme.text)),
+            if (subtitle.isNotEmpty) Text(subtitle, style: GoogleFonts.inter(
+                fontSize: 12, color: theme.textMuted, height: 1.4)),
+          ])),
+          trailing ?? (onTap != null
+              ? Icon(Icons.chevron_right, color: theme.textDim, size: 20)
+              : const SizedBox.shrink()),
+        ]),
+      ),
+    );
+  }
 }
 
 // ── Settings Group ────────────────────────────────────────────
-class SettingsGroup extends StatelessWidget {
+class SettingsGroup extends ConsumerWidget {
   final String title;
   final List<Widget> tiles;
   const SettingsGroup({super.key, required this.title, required this.tiles});
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Padding(
-        padding: const EdgeInsets.only(bottom: 8, left: 2),
-        child: Text(title, style: GoogleFonts.syne(
-            fontSize: 10, fontWeight: FontWeight.w800,
-            color: C.textDim, letterSpacing: 2)),
-      ),
-      SCard(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        child: Column(children: tiles.asMap().entries.map((e) => Column(children: [
-          e.value,
-          if (e.key < tiles.length - 1) const Divider(height: 1, color: C.border),
-        ])).toList()),
-      ),
-      const SizedBox(height: 20),
-    ],
-  );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = ref.watch(appThemeProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8, left: 2),
+          child: Text(title, style: GoogleFonts.plusJakartaSans(
+              fontSize: 10, fontWeight: FontWeight.w800,
+              color: theme.textDim, letterSpacing: 2)),
+        ),
+        SCard(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Column(children: tiles.asMap().entries.map((e) => Column(children: [
+            e.value,
+            if (e.key < tiles.length - 1) Divider(height: 1, color: theme.border),
+          ])).toList()),
+        ),
+        const SizedBox(height: 20),
+      ],
+    );
+  }
 }
 
 // ── Sub-page scaffold ─────────────────────────────────────────
-class SubPageScaffold extends StatelessWidget {
+class SubPageScaffold extends ConsumerWidget {
   final String title;
   final String? subtitle;
   final List<Widget> children;
@@ -1016,26 +1088,29 @@ class SubPageScaffold extends StatelessWidget {
       required this.children, this.fab, this.actions});
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: C.bg,
-    appBar: AppBar(
-      backgroundColor: C.bgElevated,
-      leading: IconButton(
-        icon: const Icon(Icons.arrow_back_ios_new, size: 18),
-        onPressed: () => Navigator.of(context).pop(),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = ref.watch(appThemeProvider);
+    return Scaffold(
+      backgroundColor: theme.bg,
+      appBar: AppBar(
+        backgroundColor: theme.bgElevated,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, size: 18),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, style: GoogleFonts.plusJakartaSans(
+              fontWeight: FontWeight.w800, fontSize: 16, color: theme.white)),
+          if (subtitle != null) Text(subtitle!, style: GoogleFonts.inter(
+              fontSize: 11, color: theme.textMuted)),
+        ]),
+        actions: actions,
       ),
-      title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title, style: GoogleFonts.syne(
-            fontWeight: FontWeight.w800, fontSize: 16, color: C.white)),
-        if (subtitle != null) Text(subtitle!, style: GoogleFonts.syne(
-            fontSize: 11, color: C.textMuted)),
-      ]),
-      actions: actions,
-    ),
-    body: ListView(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
-      children: children,
-    ),
-    floatingActionButton: fab,
-  );
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
+        children: children,
+      ),
+      floatingActionButton: fab,
+    );
+  }
 }

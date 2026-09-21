@@ -46,7 +46,7 @@ class _ReportsState extends ConsumerState<ReportsScreen>
             indicatorWeight: 3,
             labelColor: C.primary,
             unselectedLabelColor: C.textMuted,
-            labelStyle: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 12),
+            labelStyle: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 12),
             tabs: const [
               Tab(text: '💰 Sales'),
               Tab(text: '🔧 Repairs'),
@@ -152,7 +152,7 @@ class _SalesTab extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('📈 Revenue (Last 7 Days)', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
+                    Text('📈 Revenue (Last 7 Days)', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
                     const SizedBox(height: 16),
                     SizedBox(
                       height: 160,
@@ -173,7 +173,7 @@ class _SalesTab extends ConsumerWidget {
                                   const days = ['S','M','T','W','T','F','S'];
                                   return Padding(
                                     padding: const EdgeInsets.only(top: 4),
-                                    child: Text(days[day.weekday % 7], style: GoogleFonts.syne(fontSize: 10, color: C.textMuted)),
+                                    child: Text(days[day.weekday % 7], style: GoogleFonts.inter(fontSize: 10, color: C.textMuted)),
                                   );
                                 },
                               ),
@@ -201,12 +201,12 @@ class _SalesTab extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('🏆 Top Selling Products', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
+                    Text('🏆 Top Selling Products', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
                     const SizedBox(height: 12),
                     if (displayProds.isEmpty)
                       Center(child: Padding(
                         padding: const EdgeInsets.all(20),
-                        child: Text('No sales data yet', style: GoogleFonts.syne(color: C.textMuted)),
+                        child: Text('No sales data yet', style: GoogleFonts.inter(color: C.textMuted)),
                       ))
                     else
                       ...displayProds.map((e) => Padding(
@@ -219,8 +219,8 @@ class _SalesTab extends ConsumerWidget {
                               child: const Center(child: Text('📦', style: TextStyle(fontSize: 14))),
                             ),
                             const SizedBox(width: 12),
-                            Expanded(child: Text(e.key, style: GoogleFonts.syne(fontSize: 13, color: C.text), overflow: TextOverflow.ellipsis)),
-                            Text('${e.value.toInt()} sold', style: GoogleFonts.syne(fontSize: 13, fontWeight: FontWeight.w700, color: C.primary)),
+                            Expanded(child: Text(e.key, style: GoogleFonts.inter(fontSize: 13, color: C.text), overflow: TextOverflow.ellipsis)),
+                            Text('${e.value.toInt()} sold', style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w700, color: C.primary)),
                           ],
                         ),
                       )),
@@ -278,7 +278,7 @@ class _RepairsTab extends ConsumerWidget {
                   children: [
                     Text(
                       'Technician Performance',
-                      style: GoogleFonts.syne(
+                      style: GoogleFonts.inter(
                         fontWeight: FontWeight.w700,
                         fontSize: 14,
                         color: C.white,
@@ -296,7 +296,7 @@ class _RepairsTab extends ConsumerWidget {
                               radius: 20,
                               child: Text(
                                 t.name[0],
-                                style: GoogleFonts.syne(
+                                style: GoogleFonts.plusJakartaSans(
                                   fontWeight: FontWeight.w800,
                                   color: t.isActive ? C.primary : C.textMuted,
                                 ),
@@ -309,7 +309,7 @@ class _RepairsTab extends ConsumerWidget {
                                 children: [
                                   Text(
                                     t.name,
-                                    style: GoogleFonts.syne(
+                                    style: GoogleFonts.inter(
                                       fontWeight: FontWeight.w600,
                                       fontSize: 13,
                                       color: C.text,
@@ -317,7 +317,7 @@ class _RepairsTab extends ConsumerWidget {
                                   ),
                                   Text(
                                     '${t.totalJobs} jobs · ${t.specialization}',
-                                    style: GoogleFonts.syne(
+                                    style: GoogleFonts.inter(
                                       fontSize: 11,
                                       color: C.textMuted,
                                     ),
@@ -327,7 +327,7 @@ class _RepairsTab extends ConsumerWidget {
                             ),
                             Text(
                               '⭐ ${t.rating}',
-                              style: GoogleFonts.syne(
+                              style: GoogleFonts.inter(
                                 fontWeight: FontWeight.w700,
                                 color: C.yellow,
                               ),
@@ -411,7 +411,7 @@ class _StockTab extends StatelessWidget {
                     children: [
                       Text(
                         'Reorder Report',
-                        style: GoogleFonts.syne(
+                        style: GoogleFonts.inter(
                           fontWeight: FontWeight.w700,
                           fontSize: 14,
                           color: C.white,
@@ -434,7 +434,7 @@ class _StockTab extends StatelessWidget {
                                   children: [
                                     Text(
                                       (p as m.Product).productName,
-                                      style: GoogleFonts.syne(
+                                      style: GoogleFonts.inter(
                                         fontWeight: FontWeight.w600,
                                         fontSize: 13,
                                         color: C.text,
@@ -443,7 +443,7 @@ class _StockTab extends StatelessWidget {
                                     ),
                                     Text(
                                       '${p.stockQty} remaining · Min: ${p.reorderLevel}',
-                                      style: GoogleFonts.syne(
+                                      style: GoogleFonts.inter(
                                         fontSize: 11,
                                         color: C.textMuted,
                                       ),
@@ -553,7 +553,7 @@ class _FinanceTab extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('💎 Profit Trend (Last 7 Days)', style: GoogleFonts.syne(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
+                    Text('💎 Profit Trend (Last 7 Days)', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14, color: C.white)),
                     const SizedBox(height: 16),
                     SizedBox(
                       height: 160,
@@ -590,7 +590,7 @@ class _FinanceTab extends ConsumerWidget {
                   children: [
                     Text(
                       'Aging Receivables',
-                      style: GoogleFonts.syne(
+                      style: GoogleFonts.inter(
                         fontWeight: FontWeight.w700,
                         fontSize: 14,
                         color: C.white,
@@ -614,14 +614,14 @@ class _FinanceTab extends ConsumerWidget {
                           children: [
                             Text(
                               row.$1,
-                              style: GoogleFonts.syne(
+                              style: GoogleFonts.inter(
                                 fontSize: 13,
                                 color: C.textMuted,
                               ),
                             ),
                             Text(
                               row.$2,
-                              style: GoogleFonts.syne(
+                              style: GoogleFonts.plusJakartaSans(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w800,
                                 color: row.$3,
